@@ -1,0 +1,14 @@
+{
+  "name": "hostel-ms-backend",
+  "version": "1.0.0",
+  "description": "FastAPI backend for HostelMS",
+  "type": "module",
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio"
+  },
+  "devDependencies": {
+    "@prisma/cli": "^5.7.0"
+  }
+}

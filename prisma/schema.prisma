@@ -1,0 +1,358 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== USER MODELS ====================
+
+model User {
+  id          String      @id @default(cuid())
+  email       String      @unique
+  password    String
+  name        String
+  role        Role        @default(STUDENT)
+  avatar      String?
+  phone       String?
+  status      UserStatus  @default(ACTIVE)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  student     Student?
+  employee    Employee?
+  notifications Notification[]
+  roomAllocations RoomAllocation[]
+  chats       Chat[]
+  chatMembers ChatMember[]
+  privateChatsAsParticipant1 PrivateChat[] @relation("participant1")
+  privateChatsAsParticipant2 PrivateChat[] @relation("participant2")
+  messages    Message[]
+  readReceipts MessageReadReceipt[]
+}
+
+model Student {
+  id              String      @id @default(cuid())
+  userId          String      @unique
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matricule       String      @unique
+  department      String
+  level           String
+  guardianContact String?
+
+  roomId          String?
+  room            Room?       @relation(fields: [roomId], references: [id])
+  roomAllocations RoomAllocation[]
+  payments        Payment[]
+  complaints      Complaint[]
+  visitors        Visitor[]
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model Employee {
+  id        String      @id @default(cuid())
+  userId    String      @unique
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hostelId  String
+  hostel    Hostel      @relation(fields: [hostelId], references: [id])
+
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+// ==================== HOSTEL & ROOMS ====================
+
+model Hostel {
+  id          String    @id @default(cuid())
+  name        String
+  code        String    @unique
+  totalRooms  Int
+
+  rooms       Room[]
+  employees   Employee[]
+  groupChat   Chat?     @relation("hostelGroupChat")
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Room {
+  id          String        @id @default(cuid())
+  roomNumber  String
+  floor       String
+  block       String
+  hostelId    String
+  hostel      Hostel        @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+
+  capacity    Int
+  occupied    Int           @default(0)
+  status      RoomStatus    @default(AVAILABLE)
+  amenities   String[]
+  price       Float
+
+  students    Student[]
+  allocations RoomAllocation[]
+
+  @@unique([hostelId, roomNumber])
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+// ==================== ROOM ALLOCATION FLOW ====================
+
+model RoomAllocation {
+  id            String              @id @default(cuid())
+  studentId     String
+  student       Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  roomId        String
+  room          Room                @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status        AllocationStatus    @default(PENDING)
+  requestedAt   DateTime            @default(now())
+  approvedAt    DateTime?
+  approvedBy    String?
+  rejectionReason String?
+
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@unique([studentId, roomId])
+}
+
+// ==================== PAYMENTS ====================
+
+model Payment {
+  id        String          @id @default(cuid())
+  studentId String
+  student   Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  amount    Float
+  type      PaymentType     @default(HOSTEL_FEE)
+  month     Int
+  year      Int
+  status    PaymentStatus   @default(PENDING)
+  paidAt    DateTime?
+
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+}
+
+// ==================== COMPLAINTS ====================
+
+model Complaint {
+  id          String            @id @default(cuid())
+  studentId   String
+  student     Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String
+  category    ComplaintCategory @default(OTHER)
+  priority    Priority          @default(MEDIUM)
+  status      ComplaintStatus   @default(PENDING)
+
+  adminResponse String?
+  resolvedAt  DateTime?
+
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+// ==================== VISITORS ====================
+
+model Visitor {
+  id          String    @id @default(cuid())
+  name        String
+  phone       String
+  purpose     String
+
+  studentId   String
+  student     Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  roomNumber  String
+
+  entryTime   DateTime
+  exitTime    DateTime?
+  status      VisitorStatus @default(IN)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ==================== CHAT SYSTEM ====================
+
+model Chat {
+  id          String    @id @default(cuid())
+  hostelId    String?   @unique
+  hostel      Hostel?   @relation("hostelGroupChat", fields: [hostelId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  isGroupChat Boolean   @default(true)
+
+  messages    Message[]
+  members     ChatMember[]
+  creator     User[]    @relation()
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model ChatMember {
+  id        String    @id @default(cuid())
+  chatId    String
+  chat      Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  joinedAt  DateTime  @default(now())
+
+  @@unique([chatId, userId])
+}
+
+model PrivateChat {
+  id                  String    @id @default(cuid())
+  participant1Id      String
+  participant1        User      @relation("participant1", fields: [participant1Id], references: [id], onDelete: Cascade)
+
+  participant2Id      String
+  participant2        User      @relation("participant2", fields: [participant2Id], references: [id], onDelete: Cascade)
+
+  messages            Message[]
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([participant1Id, participant2Id])
+}
+
+model Message {
+  id            String      @id @default(cuid())
+  content       String
+  contentType   String      @default("text")
+
+  senderId      String
+  sender        User        @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  chatId        String?
+  chat          Chat?       @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  privateChatId String?
+  privateChat   PrivateChat? @relation(fields: [privateChatId], references: [id], onDelete: Cascade)
+
+  readReceipts  MessageReadReceipt[]
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model MessageReadReceipt {
+  id        String    @id @default(cuid())
+  messageId String
+  message   Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  readAt    DateTime  @default(now())
+
+  @@unique([messageId, userId])
+}
+
+// ==================== NOTIFICATIONS ====================
+
+model Notification {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title     String
+  message   String
+  type      NotificationType  @default(SYSTEM)
+
+  read      Boolean           @default(false)
+  data      Json?
+
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
+// ==================== ENUMS ====================
+
+enum Role {
+  ADMIN
+  HOSTEL_MANAGER
+  STUDENT
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum RoomStatus {
+  AVAILABLE
+  FULL
+  MAINTENANCE
+}
+
+enum AllocationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PaymentType {
+  HOSTEL_FEE
+  MAINTENANCE
+  OTHER
+}
+
+enum PaymentStatus {
+  PAID
+  PENDING
+  OVERDUE
+}
+
+enum ComplaintCategory {
+  MAINTENANCE
+  SECURITY
+  CLEANLINESS
+  NOISE
+  OTHER
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ComplaintStatus {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum VisitorStatus {
+  IN
+  OUT
+}
+
+enum NotificationType {
+  ROOM_APPROVED
+  ROOM_REJECTED
+  PAYMENT_DUE
+  COMPLAINT_UPDATE
+  MESSAGE
+  SYSTEM
+}
