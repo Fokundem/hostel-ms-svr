@@ -9,6 +9,6 @@
     "db:studio": "prisma studio"
   },
   "devDependencies": {
-    "@prisma/cli": "^5.7.0"
+    "prisma": "^5.7.0"
   }
 }

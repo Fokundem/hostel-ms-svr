@@ -1,6 +1,19 @@
 version: '3.8'
 
 services:
+  api:
+    build: .
+    container_name: hostel_ms_api
+    environment:
+      - DATABASE_URL=postgresql://hostel_user:hostel_password@postgres:5432/hostel_ms_db
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "cd app && python -m prisma db push && cd .. && uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws wsproto"
+
   postgres:
     image: postgres:16-alpine
     container_name: hostel_ms_postgres
@@ -9,7 +22,7 @@ services:
       POSTGRES_PASSWORD: hostel_password
       POSTGRES_DB: hostel_ms_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +35,7 @@ services:
     image: dpage/pgadmin4:latest
     container_name: hostel_ms_pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@hostel.local
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
       - "5050:80"

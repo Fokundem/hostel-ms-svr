@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from app.database import connect_db, disconnect_db
 from app.settings import settings
-from app.api.v1 import auth, rooms, allocations, payments
+from app.api.v1 import auth, rooms, allocations, payments, dashboard
 
 # Lifespan events
 @asynccontextmanager
@@ -45,6 +45,7 @@ app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(rooms.router, prefix=settings.API_V1_STR)
 app.include_router(allocations.router, prefix=settings.API_V1_STR)
 app.include_router(payments.router, prefix=settings.API_V1_STR)
+app.include_router(dashboard.router, prefix=settings.API_V1_STR)
 
 
 # Root endpoint

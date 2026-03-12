@@ -1,13 +1,12 @@
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.utils.security import decode_access_token
 from app.database import get_db
 from prisma import Prisma
 
 security = HTTPBearer()
 
-
-async def get_current_user(credentials: HTTPAuthCredentials = Depends(security), db: Prisma = Depends(get_db)):
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Prisma = Depends(get_db)):
     """Get the current authenticated user from JWT token"""
     token = credentials.credentials
     payload = decode_access_token(token)
