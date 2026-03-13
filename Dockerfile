@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r app/requirements.txt
 COPY . ./app/
 
 # Generate Prisma client
+ENV PRISMA_SKIP_POSTINSTALL_GENERATE=1
 RUN cd app && prisma generate
 
 EXPOSE 8000

@@ -62,9 +62,12 @@ async def root():
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
+    import traceback
+    print(f"ERROR: {str(exc)}")
+    traceback.print_exc()
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"detail": str(exc) if settings.DEBUG else "Internal server error"},
     )
 
 

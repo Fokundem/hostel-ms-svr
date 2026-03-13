@@ -20,6 +20,9 @@ class AuthService:
         # Hash password
         hashed_password = hash_password(user_data.password)
 
+        # Ensure role is uppercase to match Prisma Enum
+        role = user_data.role.upper()
+
         # Create user
         new_user = await self.db.user.create(
             data={
@@ -27,16 +30,23 @@ class AuthService:
                 "password": hashed_password,
                 "name": user_data.name,
                 "phone": user_data.phone,
-                "role": user_data.role,
+                "role": role,
             }
         )
 
         # If registering as student, create student profile
-        if user_data.role == "STUDENT":
+        if role == "STUDENT":
             if not user_data.matricule or not user_data.department or not user_data.level:
                 # Clean up user if student data is incomplete
                 await self.db.user.delete(where={"id": new_user.id})
                 raise ValueError("Student must provide matricule, department, and level")
+
+            # Check if matricule already exists
+            existing_student = await self.db.student.find_unique(where={"matricule": user_data.matricule})
+            if existing_student:
+                # Clean up user
+                await self.db.user.delete(where={"id": new_user.id})
+                raise ValueError(f"Student with matricule {user_data.matricule} already exists")
 
             await self.db.student.create(
                 data={
