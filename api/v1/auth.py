@@ -10,7 +10,7 @@ from schemas.auth import (
 )
 from utils.dependencies import get_current_user
 from utils.exceptions import InvalidCredentialsException, UserAlreadyExistsException
-from prisma import Prisma
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -18,52 +18,46 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/register", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: RegisterRequest,
-    db: Prisma = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """Register a new user (Student, Admin, or Manager)"""
     try:
         service = AuthService(db)
-        result = await service.register(user_data)
+        result = service.register(user_data)
         return {"message": "User registered successfully", "user": result}
     except UserAlreadyExistsException as e:
         raise e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred during registration"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.post("/login", response_model=LoginResponse)
 async def login(
     credentials: LoginRequest,
-    db: Prisma = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """Login user and return JWT token"""
     try:
         service = AuthService(db)
-        result = await service.login(credentials)
+        result = service.login(credentials)
         return result
     except InvalidCredentialsException as e:
         raise e
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred during login"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_details(
     current_user = Depends(get_current_user),
-    db: Prisma = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """Get current authenticated user details"""
     try:
         service = AuthService(db)
-        user_data = await service.get_user(current_user.id)
+        user_data = service.get_user(current_user.id)
         return user_data
     except Exception as e:
         raise HTTPException(
@@ -76,12 +70,12 @@ async def get_current_user_details(
 async def update_current_user(
     update_data: UserUpdateRequest,
     current_user = Depends(get_current_user),
-    db: Prisma = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """Update current user profile"""
     try:
         service = AuthService(db)
-        updated_user = await service.update_user(
+        updated_user = service.update_user(
             current_user.id,
             update_data.dict(exclude_unset=True)
         )

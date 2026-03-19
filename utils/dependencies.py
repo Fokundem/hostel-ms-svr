@@ -2,11 +2,13 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from utils.security import decode_access_token
 from database import get_db
-from prisma import Prisma
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+from models import User
 
 security = HTTPBearer()
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Prisma = Depends(get_db)):
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
     """Get the current authenticated user from JWT token"""
     token = credentials.credentials
     payload = decode_access_token(token)
@@ -25,9 +27,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    user = await db.user.find_unique(where={"id": user_id})
-    
+
+    user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -38,9 +39,10 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     return user
 
 
-async def get_current_admin(current_user = Depends(get_current_user)):
+def get_current_admin(current_user = Depends(get_current_user)):
     """Check if current user is admin"""
-    if current_user.role not in ["ADMIN", "HOSTEL_MANAGER"]:
+    role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
+    if role not in ["ADMIN", "HOSTEL_MANAGER"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions",
@@ -48,9 +50,10 @@ async def get_current_admin(current_user = Depends(get_current_user)):
     return current_user
 
 
-async def get_current_student(current_user = Depends(get_current_user)):
+def get_current_student(current_user = Depends(get_current_user)):
     """Check if current user is student"""
-    if current_user.role != "STUDENT":
+    role = current_user.role.value if hasattr(current_user.role, "value") else current_user.role
+    if role != "STUDENT":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only students can access this resource",

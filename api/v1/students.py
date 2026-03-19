@@ -1,33 +1,36 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from prisma import Prisma
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import select
 
 from database import get_db
 from utils.dependencies import get_current_admin
 from schemas.students import StudentResponse, StudentCreate, StudentUpdate
 from services.student import StudentService
+from services.notification import NotificationService
+from models import Student
 
 
 router = APIRouter(prefix="/students", tags=["Students"])
 
 
 @router.get("", response_model=list[StudentResponse])
-async def list_students(
-    db: Prisma = Depends(get_db),
+def list_students(
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_admin),
 ):
     service = StudentService(db)
-    return await service.list_students()
+    return service.list_students()
 
 
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def create_student(
+def create_student(
     payload: StudentCreate,
-    db: Prisma = Depends(get_db),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_admin),
 ):
     try:
         service = StudentService(db)
-        student = await service.create_student(payload.model_dump())
+        student = service.create_student(payload.model_dump())
         return {"message": "Student created successfully", "student": student}
     except HTTPException as e:
         raise e
@@ -38,15 +41,15 @@ async def create_student(
 
 
 @router.put("/{student_id}", response_model=dict)
-async def update_student(
+def update_student(
     student_id: str,
     payload: StudentUpdate,
-    db: Prisma = Depends(get_db),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_admin),
 ):
     try:
         service = StudentService(db)
-        student = await service.update_student(student_id, payload.model_dump(exclude_unset=True))
+        student = service.update_student(student_id, payload.model_dump(exclude_unset=True))
         return {"message": "Student updated successfully", "student": student}
     except HTTPException as e:
         raise e
@@ -57,17 +60,31 @@ async def update_student(
 
 
 @router.delete("/{student_id}", response_model=dict)
-async def delete_student(
+def delete_student(
     student_id: str,
-    db: Prisma = Depends(get_db),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_admin),
 ):
     try:
+        student = db.execute(
+            select(Student)
+            .where(Student.id == student_id)
+            .options(joinedload(Student.user))
+        ).unique().scalar_one_or_none()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+        student_name = student.user.name if student.user else "Student"
         service = StudentService(db)
-        await service.delete_student(student_id)
+        service.delete_student(student_id)
+        NotificationService(db).create_for_roles(
+            roles=["ADMIN", "HOSTEL_MANAGER"],
+            title="Student removed",
+            message=f"{student_name} was removed from the system by {current_user.name}.",
+            type_value="SYSTEM",
+            data={"link": "/admin/students"},
+        )
         return {"message": "Student deleted successfully"}
     except HTTPException as e:
         raise e
-    except Exception:
-        raise HTTPException(status_code=500, detail="Error deleting student")
-
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

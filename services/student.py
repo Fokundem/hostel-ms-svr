@@ -1,137 +1,121 @@
-from prisma import Prisma
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import select, desc
 from typing import List, Optional
 
 from utils.security import hash_password
 from utils.exceptions import UserAlreadyExistsException, UserNotFoundException
+from models import User, Student, RoleEnum, UserStatusEnum, Room, RoomStatusEnum
+
+
+def _student_to_dict(s: Student) -> dict:
+    role_val = s.user.role.value if hasattr(s.user.role, "value") else str(s.user.role)
+    status_val = s.user.status.value if hasattr(s.user.status, "value") else str(s.user.status)
+    return {
+        "id": s.id,
+        "userId": s.userId,
+        "name": s.user.name,
+        "email": s.user.email,
+        "matricule": s.matricule,
+        "department": s.department,
+        "level": s.level,
+        "phone": s.user.phone,
+        "guardianContact": s.guardianContact,
+        "roomId": s.roomId,
+        "assignedRoom": s.room.roomNumber if s.room else None,
+        "role": role_val,
+        "status": status_val,
+        "createdAt": s.createdAt,
+    }
 
 
 class StudentService:
-    def __init__(self, db: Prisma):
+    def __init__(self, db: Session):
         self.db = db
 
-    async def list_students(self) -> List[dict]:
-        students = await self.db.student.find_many(
-            include={"user": True, "room": True},
-            order={"createdAt": "desc"},
+    def list_students(self) -> List[dict]:
+        result = self.db.execute(
+            select(Student)
+            .options(joinedload(Student.user), joinedload(Student.room))
+            .order_by(desc(Student.createdAt))
         )
+        students = result.unique().scalars().all()
+        return [_student_to_dict(s) for s in students]
 
-        result: List[dict] = []
-        for s in students:
-            result.append(
-                {
-                    "id": s.id,
-                    "userId": s.userId,
-                    "name": s.user.name,
-                    "email": s.user.email,
-                    "matricule": s.matricule,
-                    "department": s.department,
-                    "level": s.level,
-                    "phone": s.user.phone,
-                    "guardianContact": s.guardianContact,
-                    "roomId": s.roomId,
-                    "assignedRoom": s.room.roomNumber if s.room else None,
-                    "role": s.user.role,
-                    "status": s.user.status,
-                    "createdAt": s.createdAt,
-                }
-            )
-        return result
-
-    async def create_student(self, data: dict) -> dict:
-        existing_user = await self.db.user.find_unique(where={"email": data["email"]})
+    def create_student(self, data: dict) -> dict:
+        existing_user = self.db.execute(select(User).where(User.email == data["email"])).scalar_one_or_none()
         if existing_user:
             raise UserAlreadyExistsException()
 
-        existing_student = await self.db.student.find_unique(where={"matricule": data["matricule"]})
+        existing_student = self.db.execute(
+            select(Student).where(Student.matricule == data["matricule"])
+        ).scalar_one_or_none()
         if existing_student:
             raise ValueError(f"Student with matricule {data['matricule']} already exists")
 
-        user = await self.db.user.create(
-            data={
-                "email": data["email"],
-                "password": hash_password(data["password"]),
-                "name": data["name"],
-                "phone": data.get("phone"),
-                "role": "STUDENT",
-                "status": "ACTIVE",
-            }
+        user = User(
+            email=data["email"],
+            password=hash_password(data["password"]),
+            name=data["name"],
+            phone=data.get("phone"),
+            role=RoleEnum.STUDENT,
+            status=UserStatusEnum.ACTIVE,
         )
+        self.db.add(user)
+        self.db.flush()
 
-        student = await self.db.student.create(
-            data={
-                "userId": user.id,
-                "matricule": data["matricule"],
-                "department": data["department"],
-                "level": data["level"],
-                "guardianContact": data.get("guardianContact"),
-            },
-            include={"user": True, "room": True},
+        student = Student(
+            userId=user.id,
+            matricule=data["matricule"],
+            department=data["department"],
+            level=data["level"],
+            guardianContact=data.get("guardianContact"),
         )
+        self.db.add(student)
+        self.db.commit()
+        self.db.refresh(student)
+        self.db.refresh(user)
+        return _student_to_dict(student)
 
-        return {
-            "id": student.id,
-            "userId": student.userId,
-            "name": student.user.name,
-            "email": student.user.email,
-            "matricule": student.matricule,
-            "department": student.department,
-            "level": student.level,
-            "phone": student.user.phone,
-            "guardianContact": student.guardianContact,
-            "roomId": student.roomId,
-            "assignedRoom": student.room.roomNumber if student.room else None,
-            "role": student.user.role,
-            "status": student.user.status,
-            "createdAt": student.createdAt,
-        }
-
-    async def update_student(self, student_id: str, data: dict) -> dict:
-        student = await self.db.student.find_unique(where={"id": student_id}, include={"user": True, "room": True})
+    def update_student(self, student_id: str, data: dict) -> dict:
+        student = self.db.execute(
+            select(Student)
+            .where(Student.id == student_id)
+            .options(joinedload(Student.user), joinedload(Student.room))
+        ).unique().scalar_one_or_none()
         if not student:
             raise UserNotFoundException("Student not found")
 
-        user_updates = {}
         if data.get("name") is not None:
-            user_updates["name"] = data["name"]
+            student.user.name = data["name"]
         if data.get("phone") is not None:
-            user_updates["phone"] = data["phone"]
+            student.user.phone = data["phone"]
         if data.get("status") is not None:
-            user_updates["status"] = data["status"].upper()
+            student.user.status = UserStatusEnum(data["status"].upper())
         if data.get("role") is not None:
-            user_updates["role"] = data["role"].upper()
-
-        if user_updates:
-            await self.db.user.update(where={"id": student.userId}, data=user_updates)
-
-        student_updates = {}
+            student.user.role = RoleEnum(data["role"].upper())
         for field in ["guardianContact", "department", "level", "roomId"]:
             if data.get(field) is not None:
-                student_updates[field] = data[field]
+                setattr(student, field, data[field])
 
-        if student_updates:
-            await self.db.student.update(where={"id": student_id}, data=student_updates)
+        self.db.commit()
+        self.db.refresh(student)
+        return _student_to_dict(student)
 
-        updated = await self.db.student.find_unique(where={"id": student_id}, include={"user": True, "room": True})
-        return {
-            "id": updated.id,
-            "userId": updated.userId,
-            "name": updated.user.name,
-            "email": updated.user.email,
-            "matricule": updated.matricule,
-            "department": updated.department,
-            "level": updated.level,
-            "phone": updated.user.phone,
-            "guardianContact": updated.guardianContact,
-            "roomId": updated.roomId,
-            "assignedRoom": updated.room.roomNumber if updated.room else None,
-            "role": updated.user.role,
-            "status": updated.user.status,
-            "createdAt": updated.createdAt,
-        }
-
-    async def delete_student(self, student_id: str) -> None:
-        student = await self.db.student.find_unique(where={"id": student_id})
+    def delete_student(self, student_id: str) -> None:
+        student = self.db.execute(
+            select(Student).where(Student.id == student_id).options(joinedload(Student.room))
+        ).unique().scalar_one_or_none()
         if not student:
             raise UserNotFoundException("Student not found")
-        await self.db.user.delete(where={"id": student.userId})
-
+        # If student has a room, decrement occupied count and update status
+        if student.roomId and student.room:
+            room = student.room
+            room.occupied = max(0, (room.occupied or 0) - 1)
+            room.status = RoomStatusEnum.AVAILABLE if (room.occupied or 0) < room.capacity else RoomStatusEnum.FULL
+        # Delete student first (DB cascade will remove Payment, Complaint, Visitor, RoomAllocation)
+        # Then delete user (DB cascade will remove Notification)
+        self.db.delete(student)
+        user = self.db.execute(select(User).where(User.id == student.userId)).scalar_one_or_none()
+        if user:
+            self.db.delete(user)
+        self.db.commit()

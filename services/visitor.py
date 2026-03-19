@@ -1,51 +1,52 @@
-from prisma import Prisma
 from typing import List, Optional
 from datetime import datetime
 
+from sqlalchemy.orm import Session
+from sqlalchemy import select, desc
+
+from models import Visitor, Student, User, VisitorStatusEnum
+
 
 class VisitorService:
-    def __init__(self, db: Prisma):
+    def __init__(self, db: Session):
         self.db = db
 
-    async def list_visitors(self, status: Optional[str] = None) -> List[dict]:
-        filters = {}
+    def list_visitors(self, status: Optional[str] = None) -> List[dict]:
+        q = (
+            select(Visitor, User.name)
+            .join(Student, Student.id == Visitor.studentId)
+            .join(User, User.id == Student.userId)
+        )
         if status:
-            filters["status"] = status.upper()
+            q = q.where(Visitor.status == status.upper())
+        q = q.order_by(desc(Visitor.createdAt))
 
-        visitors = await self.db.visitor.find_many(
-            where=filters,
-            include={"student": {"include": {"user": True, "room": True}}},
-            order={"createdAt": "desc"},
-        )
+        rows = self.db.execute(q).all()
+        return [
+            {
+                "id": v.id,
+                "name": v.name,
+                "phone": v.phone,
+                "purpose": v.purpose,
+                "studentId": v.studentId,
+                "studentName": student_name,
+                "roomNumber": v.roomNumber,
+                "status": v.status.value if hasattr(v.status, "value") else str(v.status),
+                "requestedAt": v.requestedAt,
+                "approvedAt": v.approvedAt,
+                "approvedBy": v.approvedBy,
+                "rejectionReason": v.rejectionReason,
+                "entryTime": v.entryTime,
+                "exitTime": v.exitTime,
+                "createdAt": v.createdAt,
+            }
+            for (v, student_name) in rows
+        ]
 
-        result = []
-        for v in visitors:
-            result.append(
-                {
-                    "id": v.id,
-                    "name": v.name,
-                    "phone": v.phone,
-                    "purpose": v.purpose,
-                    "studentId": v.studentId,
-                    "studentName": v.student.user.name,
-                    "roomNumber": v.student.room.roomNumber if v.student.room else v.roomNumber,
-                    "status": v.status,
-                    "requestedAt": v.requestedAt,
-                    "approvedAt": v.approvedAt,
-                    "approvedBy": v.approvedBy,
-                    "rejectionReason": v.rejectionReason,
-                    "entryTime": v.entryTime,
-                    "exitTime": v.exitTime,
-                    "createdAt": v.createdAt,
-                }
-            )
-        return result
-
-    async def list_for_student(self, student_id: str) -> List[dict]:
-        visitors = await self.db.visitor.find_many(
-            where={"studentId": student_id},
-            order={"createdAt": "desc"},
-        )
+    def list_for_student(self, student_id: str) -> List[dict]:
+        visitors = self.db.execute(
+            select(Visitor).where(Visitor.studentId == student_id).order_by(desc(Visitor.createdAt))
+        ).scalars().all()
         return [
             {
                 "id": v.id,
@@ -54,7 +55,7 @@ class VisitorService:
                 "purpose": v.purpose,
                 "studentId": v.studentId,
                 "roomNumber": v.roomNumber,
-                "status": v.status,
+                "status": v.status.value if hasattr(v.status, "value") else str(v.status),
                 "requestedAt": v.requestedAt,
                 "approvedAt": v.approvedAt,
                 "approvedBy": v.approvedBy,
@@ -66,26 +67,28 @@ class VisitorService:
             for v in visitors
         ]
 
-    async def request_visit(self, student_id: str, data: dict) -> dict:
-        student = await self.db.student.find_unique(
-            where={"id": student_id},
-            include={"room": True, "user": True},
-        )
+    def request_visit(self, student_id: str, data: dict) -> dict:
+        student = self.db.execute(select(Student).where(Student.id == student_id)).scalar_one_or_none()
         if not student:
             raise ValueError("Student not found")
-        room_number = student.room.roomNumber if student.room else "UNASSIGNED"
+        room_number = "UNASSIGNED"
 
-        visitor = await self.db.visitor.create(
-            data={
-                "name": data["name"],
-                "phone": data["phone"],
-                "purpose": data["purpose"],
-                "studentId": student.id,
-                "roomNumber": room_number,
-                "status": "PENDING",
-                "requestedAt": datetime.utcnow(),
-            }
+        visitor = Visitor(
+            name=data["name"],
+            phone=data["phone"],
+            purpose=data["purpose"],
+            studentId=student.id,
+            roomNumber=room_number,
+            status=VisitorStatusEnum.PENDING,
+            requestedAt=datetime.utcnow(),
         )
+        self.db.add(visitor)
+        self.db.commit()
+        self.db.refresh(visitor)
+
+        student_name = self.db.execute(
+            select(User.name).join(Student, Student.userId == User.id).where(Student.id == student.id)
+        ).scalar_one()
 
         return {
             "id": visitor.id,
@@ -93,9 +96,9 @@ class VisitorService:
             "phone": visitor.phone,
             "purpose": visitor.purpose,
             "studentId": visitor.studentId,
-            "studentName": student.user.name,
+            "studentName": student_name,
             "roomNumber": visitor.roomNumber,
-            "status": visitor.status,
+            "status": visitor.status.value if hasattr(visitor.status, "value") else str(visitor.status),
             "requestedAt": visitor.requestedAt,
             "approvedAt": visitor.approvedAt,
             "approvedBy": visitor.approvedBy,
@@ -105,18 +108,20 @@ class VisitorService:
             "createdAt": visitor.createdAt,
         }
 
-    async def admin_decide(self, visitor_id: str, status_value: str, approved_by: str, rejection_reason: Optional[str] = None) -> dict:
+    def admin_decide(self, visitor_id: str, status_value: str, approved_by: str, rejection_reason: Optional[str] = None) -> dict:
         if status_value not in ["APPROVED", "REJECTED"]:
             raise ValueError("Invalid status")
-        data = {
-            "status": status_value,
-            "approvedAt": datetime.utcnow(),
-            "approvedBy": approved_by,
-            "rejectionReason": None,
-        }
+        visitor = self.db.execute(select(Visitor).where(Visitor.id == visitor_id)).scalar_one_or_none()
+        if not visitor:
+            raise ValueError("Visitor not found")
+        visitor.status = VisitorStatusEnum(status_value)
+        visitor.approvedAt = datetime.utcnow()
+        visitor.approvedBy = approved_by
+        visitor.rejectionReason = None
         if status_value == "REJECTED":
-            data["rejectionReason"] = rejection_reason or "Rejected"
-        visitor = await self.db.visitor.update(where={"id": visitor_id}, data=data)
+            visitor.rejectionReason = rejection_reason or "Rejected"
+        self.db.commit()
+        self.db.refresh(visitor)
         return {
             "id": visitor.id,
             "name": visitor.name,
@@ -124,7 +129,7 @@ class VisitorService:
             "purpose": visitor.purpose,
             "studentId": visitor.studentId,
             "roomNumber": visitor.roomNumber,
-            "status": visitor.status,
+            "status": visitor.status.value if hasattr(visitor.status, "value") else str(visitor.status),
             "requestedAt": visitor.requestedAt,
             "approvedAt": visitor.approvedAt,
             "approvedBy": visitor.approvedBy,

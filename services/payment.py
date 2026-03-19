@@ -1,87 +1,80 @@
-from prisma import Prisma
-from schemas.payment import PaymentCreate, PaymentUpdate
-from typing import Optional, List
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import select, desc
 from datetime import datetime
+from typing import Optional, List
+
+from models import Payment, Student, PaymentStatusEnum, PaymentTypeEnum
+from schemas.payment import PaymentCreate
+
+
+def _payment_to_dict(payment: Payment, include_student_name: bool = False) -> dict:
+    status_val = payment.status.value if hasattr(payment.status, "value") else str(payment.status)
+    type_val = payment.type.value if hasattr(payment.type, "value") else str(payment.type)
+    out = {
+        "id": payment.id,
+        "studentId": payment.studentId,
+        "amount": payment.amount,
+        "type": type_val,
+        "month": payment.month,
+        "year": payment.year,
+        "status": status_val,
+        "method": getattr(payment, "method", None),
+        "proofImageUrl": getattr(payment, "proofImageUrl", None),
+        "rejectionReason": getattr(payment, "rejectionReason", None),
+        "reviewedAt": payment.reviewedAt.isoformat() if payment.reviewedAt else None,
+        "reviewedBy": getattr(payment, "reviewedBy", None),
+        "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
+        "createdAt": payment.createdAt.isoformat() if payment.createdAt else None,
+    }
+    if include_student_name and payment.student and payment.student.user:
+        out["studentName"] = payment.student.user.name
+    return out
 
 
 class PaymentService:
-    def __init__(self, db: Prisma):
+    def __init__(self, db: Session):
         self.db = db
 
-    async def get_student_payments(self, student_id: str) -> List[dict]:
-        """Get all payments for a student"""
-        payments = await self.db.payment.find_many(
-            where={"studentId": student_id},
-            order={"createdAt": "desc"}
-        )
-        
-        return [
-            {
-                "id": payment.id,
-                "studentId": payment.studentId,
-                "amount": payment.amount,
-                "type": payment.type,
-                "month": payment.month,
-                "year": payment.year,
-                "status": payment.status,
-                "method": getattr(payment, "method", None),
-                "proofImageUrl": getattr(payment, "proofImageUrl", None),
-                "rejectionReason": getattr(payment, "rejectionReason", None),
-                "reviewedAt": payment.reviewedAt.isoformat() if getattr(payment, "reviewedAt", None) else None,
-                "reviewedBy": getattr(payment, "reviewedBy", None),
-                "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
-                "createdAt": payment.createdAt.isoformat(),
-            }
-            for payment in payments
-        ]
+    def get_student_payments(self, student_id: str) -> List[dict]:
+        payments = self.db.execute(
+            select(Payment).where(Payment.studentId == student_id).order_by(desc(Payment.createdAt))
+        ).scalars().all()
+        return [_payment_to_dict(p) for p in payments]
 
-    async def get_payment_summary(self, student_id: str) -> dict:
-        """Get payment summary for a student"""
-        payments = await self.db.payment.find_many(
-            where={"studentId": student_id}
-        )
-        
-        total_due = sum(p.amount for p in payments if p.status in ["PENDING", "OVERDUE", "REJECTED"])
-        total_paid = sum(p.amount for p in payments if p.status in ["APPROVED", "PAID"])
-        total_overdue = sum(p.amount for p in payments if p.status == "OVERDUE")
-        
+    def get_payment_summary(self, student_id: str) -> dict:
+        payments = self.db.execute(select(Payment).where(Payment.studentId == student_id)).scalars().all()
+        status_vals = [p.status.value if hasattr(p.status, "value") else str(p.status) for p in payments]
+        total_due = sum(p.amount for p, s in zip(payments, status_vals) if s in ["PENDING", "OVERDUE", "REJECTED"])
+        total_paid = sum(p.amount for p, s in zip(payments, status_vals) if s in ["APPROVED", "PAID"])
+        total_overdue = sum(p.amount for p, s in zip(payments, status_vals) if s == "OVERDUE")
         return {
             "totalDue": total_due,
             "totalPaid": total_paid,
             "totalOverdue": total_overdue,
-            "pendingCount": len([p for p in payments if p.status == "PENDING"]),
-            "paidCount": len([p for p in payments if p.status in ["APPROVED", "PAID"]]),
-            "overdueCount": len([p for p in payments if p.status == "OVERDUE"]),
+            "pendingCount": sum(1 for s in status_vals if s == "PENDING"),
+            "paidCount": sum(1 for s in status_vals if s in ["APPROVED", "PAID"]),
+            "overdueCount": sum(1 for s in status_vals if s == "OVERDUE"),
         }
 
-    async def create_payment(self, student_id: str, payment_data: PaymentCreate) -> dict:
-        """Create a payment record (admin only)"""
-        payment = await self.db.payment.create(
-            data={
-                "studentId": student_id,
-                "amount": payment_data.amount,
-                "type": payment_data.type,
-                "month": payment_data.month,
-                "year": payment_data.year,
-                "status": "PENDING",
-                "method": getattr(payment_data, "method", "BANK_TRANSFER"),
-            }
+    def create_payment(self, student_id: str, payment_data: PaymentCreate) -> dict:
+        type_val = getattr(payment_data, "type", "HOSTEL_FEE")
+        if isinstance(type_val, str):
+            type_val = PaymentTypeEnum(type_val) if type_val in [e.value for e in PaymentTypeEnum] else PaymentTypeEnum.HOSTEL_FEE
+        payment = Payment(
+            studentId=student_id,
+            amount=payment_data.amount,
+            type=type_val,
+            month=payment_data.month,
+            year=payment_data.year,
+            status=PaymentStatusEnum.PENDING,
+            method=getattr(payment_data, "method", "BANK_TRANSFER"),
         )
-        
-        return {
-            "id": payment.id,
-            "studentId": payment.studentId,
-            "amount": payment.amount,
-            "type": payment.type,
-            "month": payment.month,
-            "year": payment.year,
-            "status": payment.status,
-            "method": payment.method,
-            "proofImageUrl": payment.proofImageUrl,
-            "createdAt": payment.createdAt.isoformat(),
-        }
+        self.db.add(payment)
+        self.db.commit()
+        self.db.refresh(payment)
+        return _payment_to_dict(payment)
 
-    async def submit_payment_proof(
+    def submit_payment_proof(
         self,
         student_id: str,
         amount: float,
@@ -91,121 +84,58 @@ class PaymentService:
         method: str,
         proof_image_url: str,
     ) -> dict:
-        payment = await self.db.payment.create(
-            data={
-                "studentId": student_id,
-                "amount": amount,
-                "type": payment_type,
-                "month": month,
-                "year": year,
-                "status": "SUBMITTED",
-                "method": method,
-                "proofImageUrl": proof_image_url,
-            }
+        type_enum = PaymentTypeEnum(payment_type) if payment_type in [e.value for e in PaymentTypeEnum] else PaymentTypeEnum.HOSTEL_FEE
+        payment = Payment(
+            studentId=student_id,
+            amount=amount,
+            type=type_enum,
+            month=month,
+            year=year,
+            status=PaymentStatusEnum.SUBMITTED,
+            method=method,
+            proofImageUrl=proof_image_url,
         )
-        return {
-            "id": payment.id,
-            "studentId": payment.studentId,
-            "amount": payment.amount,
-            "type": payment.type,
-            "month": payment.month,
-            "year": payment.year,
-            "status": payment.status,
-            "method": payment.method,
-            "proofImageUrl": payment.proofImageUrl,
-            "createdAt": payment.createdAt.isoformat(),
-        }
+        self.db.add(payment)
+        self.db.commit()
+        self.db.refresh(payment)
+        return _payment_to_dict(payment)
 
-    async def admin_review_payment(
+    def admin_review_payment(
         self,
         payment_id: str,
         status_value: str,
         reviewed_by: str,
         rejection_reason: Optional[str] = None,
     ) -> dict:
-        data = {
-            "status": status_value,
-            "reviewedAt": datetime.utcnow(),
-            "reviewedBy": reviewed_by,
-        }
+        payment = self.db.execute(select(Payment).where(Payment.id == payment_id)).scalar_one_or_none()
+        if not payment:
+            raise ValueError("Payment not found")
+        payment.status = PaymentStatusEnum(status_value)
+        payment.reviewedAt = datetime.utcnow()
+        payment.reviewedBy = reviewed_by
         if status_value in ["APPROVED", "PAID"]:
-            data["paidAt"] = datetime.utcnow()
-            data["rejectionReason"] = None
-        if status_value == "REJECTED":
-            data["rejectionReason"] = rejection_reason or "Rejected"
+            payment.paidAt = datetime.utcnow()
+            payment.rejectionReason = None
+        elif status_value == "REJECTED":
+            payment.rejectionReason = rejection_reason or "Rejected"
+        self.db.commit()
+        self.db.refresh(payment)
+        return _payment_to_dict(payment)
 
-        payment = await self.db.payment.update(where={"id": payment_id}, data=data)
-        return {
-            "id": payment.id,
-            "studentId": payment.studentId,
-            "amount": payment.amount,
-            "type": payment.type,
-            "month": payment.month,
-            "year": payment.year,
-            "status": payment.status,
-            "method": payment.method,
-            "proofImageUrl": payment.proofImageUrl,
-            "rejectionReason": payment.rejectionReason,
-            "reviewedAt": payment.reviewedAt.isoformat() if payment.reviewedAt else None,
-            "reviewedBy": payment.reviewedBy,
-            "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
-            "createdAt": payment.createdAt.isoformat(),
-        }
+    def mark_payment_paid(self, payment_id: str) -> dict:
+        payment = self.db.execute(select(Payment).where(Payment.id == payment_id)).scalar_one_or_none()
+        if not payment:
+            raise ValueError("Payment not found")
+        payment.status = PaymentStatusEnum.PAID
+        payment.paidAt = datetime.utcnow()
+        payment.reviewedAt = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(payment)
+        return _payment_to_dict(payment)
 
-    async def mark_payment_paid(self, payment_id: str) -> dict:
-        """Mark a payment as paid"""
-        payment = await self.db.payment.update(
-            where={"id": payment_id},
-            data={
-                "status": "PAID",
-                "paidAt": datetime.utcnow(),
-                "reviewedAt": datetime.utcnow(),
-            }
-        )
-        
-        return {
-            "id": payment.id,
-            "studentId": payment.studentId,
-            "amount": payment.amount,
-            "type": payment.type,
-            "month": payment.month,
-            "year": payment.year,
-            "status": payment.status,
-            "method": getattr(payment, "method", None),
-            "proofImageUrl": getattr(payment, "proofImageUrl", None),
-            "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
-            "createdAt": payment.createdAt.isoformat(),
-        }
-
-    async def get_all_payments(self, status: Optional[str] = None) -> List[dict]:
-        """Get all payments (admin view)"""
-        filters = {}
+    def get_all_payments(self, status: Optional[str] = None) -> List[dict]:
+        q = select(Payment).options(joinedload(Payment.student).joinedload(Student.user)).order_by(desc(Payment.createdAt))
         if status:
-            filters["status"] = status
-        
-        payments = await self.db.payment.find_many(
-            where=filters,
-            include={"student": True},
-            order={"createdAt": "desc"}
-        )
-        
-        return [
-            {
-                "id": payment.id,
-                "studentId": payment.studentId,
-                "studentName": payment.student.user.name,
-                "amount": payment.amount,
-                "type": payment.type,
-                "month": payment.month,
-                "year": payment.year,
-                "status": payment.status,
-                "method": getattr(payment, "method", None),
-                "proofImageUrl": getattr(payment, "proofImageUrl", None),
-                "rejectionReason": getattr(payment, "rejectionReason", None),
-                "reviewedAt": payment.reviewedAt.isoformat() if getattr(payment, "reviewedAt", None) else None,
-                "reviewedBy": getattr(payment, "reviewedBy", None),
-                "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
-                "createdAt": payment.createdAt.isoformat(),
-            }
-            for payment in payments
-        ]
+            q = q.where(Payment.status == PaymentStatusEnum(status))
+        payments = self.db.execute(q).unique().scalars().all()
+        return [_payment_to_dict(p, include_student_name=True) for p in payments]

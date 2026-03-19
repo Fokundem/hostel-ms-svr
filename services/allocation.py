@@ -1,112 +1,112 @@
-from prisma import Prisma
-from utils.exceptions import AllocationNotFoundException, RoomNotFoundException, RoomFullException
-from schemas.room import RoomAllocationCreate, RoomAllocationUpdateStatus
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import select, desc
 from datetime import datetime
 from typing import Optional, List
 
+from utils.exceptions import AllocationNotFoundException, RoomNotFoundException, RoomFullException
+from models import Room, RoomAllocation, Student, RoomStatusEnum, AllocationStatusEnum
+
 
 class AllocationService:
-    def __init__(self, db: Prisma):
+    def __init__(self, db: Session):
         self.db = db
 
-    async def request_room(self, student_id: str, user_id: str, room_id: str) -> dict:
-        """Student requests a room"""
-        # Check if room exists
-        room = await self.db.room.find_unique(where={"id": room_id})
+    def request_room(self, student_id: str, user_id: str, room_id: str) -> dict:
+        room = self.db.execute(select(Room).where(Room.id == room_id)).scalar_one_or_none()
         if not room:
             raise RoomNotFoundException()
-        
-        # Check if room is available
-        if room.status != "AVAILABLE":
-            raise RoomFullException(f"Room is {room.status.lower()}")
-        
-        # Check if student already has pending allocation
-        existing = await self.db.roomallocation.find_first(
-            where={
-                "studentId": student_id,
-                "status": "PENDING"
-            }
-        )
+        if room.status != RoomStatusEnum.AVAILABLE:
+            status_val = room.status.value if hasattr(room.status, "value") else str(room.status)
+            raise RoomFullException(f"Room is {status_val.lower()}")
+
+        existing = self.db.execute(
+            select(RoomAllocation).where(
+                RoomAllocation.studentId == student_id,
+                RoomAllocation.status == AllocationStatusEnum.PENDING,
+            )
+        ).scalar_one_or_none()
         if existing:
             raise ValueError("You already have a pending room allocation request")
-        
-        # Create allocation request
-        allocation = await self.db.roomallocation.create(
-            data={
-                "studentId": student_id,
-                "userId": user_id,
-                "roomId": room_id,
-                "status": "PENDING",
-            }
+
+        allocation = RoomAllocation(
+            studentId=student_id,
+            userId=user_id,
+            roomId=room_id,
+            status=AllocationStatusEnum.PENDING,
         )
-        
+        self.db.add(allocation)
+        self.db.commit()
+        self.db.refresh(allocation)
         return {
             "id": allocation.id,
             "studentId": allocation.studentId,
             "roomId": allocation.roomId,
-            "status": allocation.status,
-            "requestedAt": allocation.requestedAt.isoformat(),
+            "status": allocation.status.value if hasattr(allocation.status, "value") else str(allocation.status),
+            "requestedAt": allocation.requestedAt.isoformat() if allocation.requestedAt else None,
         }
 
-    async def get_student_allocation(self, student_id: str) -> Optional[dict]:
-        """Get student's room allocation"""
-        allocation = await self.db.roomallocation.find_first(
-            where={"studentId": student_id},
-            order={"requestedAt": "desc"},
-            include={"room": True}
+    def get_student_allocation(self, student_id: str) -> Optional[dict]:
+        allocation = (
+            self.db.execute(
+                select(RoomAllocation)
+                .where(RoomAllocation.studentId == student_id)
+                .options(joinedload(RoomAllocation.room))
+                .order_by(desc(RoomAllocation.requestedAt))
+                .limit(1)
+            )
+            .scalars()
+            .first()
         )
-        
         if not allocation:
             return None
-        
+
+        room = allocation.room
+        status_val = allocation.status.value if hasattr(allocation.status, "value") else str(allocation.status)
         return {
             "id": allocation.id,
             "studentId": allocation.studentId,
             "roomId": allocation.roomId,
-            "status": allocation.status,
-            "requestedAt": allocation.requestedAt.isoformat(),
+            "status": status_val,
+            "requestedAt": allocation.requestedAt.isoformat() if allocation.requestedAt else None,
             "approvedAt": allocation.approvedAt.isoformat() if allocation.approvedAt else None,
             "room": {
-                "id": allocation.room.id,
-                "roomNumber": allocation.room.roomNumber,
-                "floor": allocation.room.floor,
-                "block": allocation.room.block,
-                "capacity": allocation.room.capacity,
-                "occupied": allocation.room.occupied,
-                "status": allocation.room.status,
-                "amenities": allocation.room.amenities,
-                "price": allocation.room.price,
-                "createdAt": allocation.room.createdAt.isoformat(),
-            }
+                "id": room.id,
+                "roomNumber": room.roomNumber,
+                "floor": room.floor,
+                "block": room.block,
+                "capacity": room.capacity,
+                "occupied": room.occupied,
+                "status": room.status.value if hasattr(room.status, "value") else str(room.status),
+                "amenities": room.amenities or [],
+                "price": room.price,
+                "createdAt": room.createdAt.isoformat() if room.createdAt else None,
+            },
         }
 
-    async def get_all_allocations(self, status: Optional[str] = None, hostel_id: Optional[str] = None) -> List[dict]:
-        """Get all room allocations (admin view), optionally filtered by status and hostel"""
-        filters = {}
+    def get_all_allocations(self, status: Optional[str] = None, hostel_id: Optional[str] = None) -> List[dict]:
+        q = select(RoomAllocation).options(
+            joinedload(RoomAllocation.student).joinedload(Student.user),
+            joinedload(RoomAllocation.room),
+        ).order_by(desc(RoomAllocation.requestedAt))
         if status:
-            filters["status"] = status
-        
-        allocations = await self.db.roomallocation.find_many(
-            where=filters,
-            include={"student": True, "room": True},
-            order={"requestedAt": "desc"}
-        )
-        
-        result = []
-        for alloc in allocations:
-            # Filter by hostel if specified
+            q = q.where(RoomAllocation.status == AllocationStatusEnum(status))
+        result = self.db.execute(q).unique().scalars().all()
+
+        out = []
+        for alloc in result:
             if hostel_id and alloc.room.hostelId != hostel_id:
                 continue
-            
-            result.append({
+            status_val = alloc.status.value if hasattr(alloc.status, "value") else str(alloc.status)
+            room_status = alloc.room.status.value if hasattr(alloc.room.status, "value") else str(alloc.room.status)
+            out.append({
                 "id": alloc.id,
                 "studentId": alloc.studentId,
                 "studentName": alloc.student.user.name,
                 "roomId": alloc.roomId,
                 "roomNumber": alloc.room.roomNumber,
                 "floor": alloc.room.floor,
-                "status": alloc.status,
-                "requestedAt": alloc.requestedAt.isoformat(),
+                "status": status_val,
+                "requestedAt": alloc.requestedAt.isoformat() if alloc.requestedAt else None,
                 "approvedAt": alloc.approvedAt.isoformat() if alloc.approvedAt else None,
                 "approvedBy": alloc.approvedBy,
                 "rejectionReason": alloc.rejectionReason,
@@ -118,109 +118,136 @@ class AllocationService:
                     "capacity": alloc.room.capacity,
                     "occupied": alloc.room.occupied,
                     "price": alloc.room.price,
-                }
+                    "status": room_status,
+                },
             })
-        
-        return result
+        return out
 
-    async def approve_allocation(self, allocation_id: str, approved_by: str) -> dict:
-        """Admin approves a room allocation"""
-        allocation = await self.db.roomallocation.find_unique(
-            where={"id": allocation_id},
-            include={"room": True, "student": True}
+    def approve_allocation(self, allocation_id: str, approved_by: str) -> dict:
+        allocation = (
+            self.db.execute(
+                select(RoomAllocation)
+                .where(RoomAllocation.id == allocation_id)
+                .options(joinedload(RoomAllocation.room), joinedload(RoomAllocation.student))
+            )
+            .unique()
+            .scalar_one_or_none()
         )
-        
         if not allocation:
             raise AllocationNotFoundException()
-        
-        if allocation.status != "PENDING":
-            raise ValueError(f"Allocation is already {allocation.status.lower()}")
-        
-        # Check if room is still available
-        if allocation.room.status != "AVAILABLE":
+        if allocation.status != AllocationStatusEnum.PENDING:
+            raise ValueError("Allocation is already processed")
+        if allocation.room.status != RoomStatusEnum.AVAILABLE:
             raise RoomFullException("Room is no longer available")
-        
-        # Update allocation status
-        updated_allocation = await self.db.roomallocation.update(
-            where={"id": allocation_id},
-            data={
-                "status": "APPROVED",
-                "approvedAt": datetime.utcnow(),
-                "approvedBy": approved_by,
-            },
-            include={"room": True}
-        )
-        
-        # Update student room assignment
-        await self.db.student.update(
-            where={"id": allocation.studentId},
-            data={"roomId": allocation.roomId}
-        )
-        
-        # Update room occupied count and status
-        new_occupied = allocation.room.occupied + 1
-        new_status = "FULL" if new_occupied >= allocation.room.capacity else "AVAILABLE"
-        
-        await self.db.room.update(
-            where={"id": allocation.roomId},
-            data={
-                "occupied": new_occupied,
-                "status": new_status,
-            }
-        )
-        
+
+        allocation.status = AllocationStatusEnum.APPROVED
+        allocation.approvedAt = datetime.utcnow()
+        allocation.approvedBy = approved_by
+
+        allocation.student.roomId = allocation.roomId
+        room = allocation.room
+        room.occupied = (room.occupied or 0) + 1
+        room.status = RoomStatusEnum.FULL if room.occupied >= room.capacity else RoomStatusEnum.AVAILABLE
+
+        self.db.commit()
+        self.db.refresh(allocation)
+
         return {
-            "id": updated_allocation.id,
-            "studentId": updated_allocation.studentId,
-            "roomId": updated_allocation.roomId,
-            "status": updated_allocation.status,
-            "approvedAt": updated_allocation.approvedAt.isoformat(),
-            "approvedBy": updated_allocation.approvedBy,
+            "id": allocation.id,
+            "studentId": allocation.studentId,
+            "roomId": allocation.roomId,
+            "status": allocation.status.value,
+            "approvedAt": allocation.approvedAt.isoformat(),
+            "approvedBy": allocation.approvedBy,
         }
 
-    async def reject_allocation(self, allocation_id: str, approved_by: str, reason: str) -> dict:
-        """Admin rejects a room allocation"""
-        allocation = await self.db.roomallocation.find_unique(where={"id": allocation_id})
-        
+    def reject_allocation(self, allocation_id: str, approved_by: str, reason: str) -> dict:
+        allocation = self.db.execute(
+            select(RoomAllocation).where(RoomAllocation.id == allocation_id)
+        ).scalar_one_or_none()
         if not allocation:
             raise AllocationNotFoundException()
-        
-        if allocation.status != "PENDING":
-            raise ValueError(f"Allocation is already {allocation.status.lower()}")
-        
-        # Update allocation status
-        updated_allocation = await self.db.roomallocation.update(
-            where={"id": allocation_id},
-            data={
-                "status": "REJECTED",
-                "approvedBy": approved_by,
-                "rejectionReason": reason,
-            }
-        )
-        
+        if allocation.status != AllocationStatusEnum.PENDING:
+            raise ValueError("Allocation is already processed")
+
+        allocation.status = AllocationStatusEnum.REJECTED
+        allocation.approvedBy = approved_by
+        allocation.rejectionReason = reason
+        self.db.commit()
+        self.db.refresh(allocation)
+
         return {
-            "id": updated_allocation.id,
-            "studentId": updated_allocation.studentId,
-            "roomId": updated_allocation.roomId,
-            "status": updated_allocation.status,
-            "rejectionReason": updated_allocation.rejectionReason,
+            "id": allocation.id,
+            "studentId": allocation.studentId,
+            "roomId": allocation.roomId,
+            "status": allocation.status.value,
+            "rejectionReason": allocation.rejectionReason,
         }
 
-    async def get_pending_allocations(self, hostel_id: Optional[str] = None) -> List[dict]:
-        """Get pending allocation requests for admin/hostel manager"""
-        allocations = await self.db.roomallocation.find_many(
-            where={"status": "PENDING"},
-            include={"student": True, "room": True},
-            order={"requestedAt": "asc"}
+    def get_allocation_by_id(self, allocation_id: str) -> Optional[dict]:
+        allocation = (
+            self.db.execute(
+                select(RoomAllocation)
+                .where(RoomAllocation.id == allocation_id)
+                .options(
+                    joinedload(RoomAllocation.student),
+                    joinedload(RoomAllocation.room),
+                )
+            )
+            .unique()
+            .scalar_one_or_none()
         )
-        
-        result = []
-        for alloc in allocations:
-            # Filter by hostel if specified
+        if not allocation:
+            return None
+        room = allocation.room
+        status_val = allocation.status.value if hasattr(allocation.status, "value") else str(allocation.status)
+        room_status = room.status.value if hasattr(room.status, "value") else str(room.status)
+        return {
+            "id": allocation.id,
+            "studentId": allocation.studentId,
+            "roomId": allocation.roomId,
+            "status": status_val,
+            "requestedAt": allocation.requestedAt,
+            "approvedAt": allocation.approvedAt,
+            "approvedBy": allocation.approvedBy,
+            "rejectionReason": allocation.rejectionReason,
+            "student": {
+                "id": allocation.student.id,
+                "userId": allocation.student.userId,
+                "matricule": allocation.student.matricule,
+                "department": allocation.student.department,
+                "level": allocation.student.level,
+            },
+            "room": {
+                "id": room.id,
+                "roomNumber": room.roomNumber,
+                "floor": room.floor,
+                "block": room.block,
+                "capacity": room.capacity,
+                "occupied": room.occupied,
+                "status": room_status,
+                "amenities": room.amenities or [],
+                "price": room.price,
+                "createdAt": room.createdAt.isoformat() if room.createdAt else None,
+            },
+        }
+
+    def get_pending_allocations(self, hostel_id: Optional[str] = None) -> List[dict]:
+        result = self.db.execute(
+            select(RoomAllocation)
+            .where(RoomAllocation.status == AllocationStatusEnum.PENDING)
+            .options(
+                joinedload(RoomAllocation.student).joinedload(Student.user),
+                joinedload(RoomAllocation.room),
+            )
+            .order_by(RoomAllocation.requestedAt)
+        ).unique().scalars().all()
+
+        out = []
+        for alloc in result:
             if hostel_id and alloc.room.hostelId != hostel_id:
                 continue
-            
-            result.append({
+            out.append({
                 "id": alloc.id,
                 "studentId": alloc.studentId,
                 "studentName": alloc.student.user.name,
@@ -232,7 +259,6 @@ class AllocationService:
                 "roomNumber": alloc.room.roomNumber,
                 "floor": alloc.room.floor,
                 "block": alloc.room.block,
-                "requestedAt": alloc.requestedAt.isoformat(),
+                "requestedAt": alloc.requestedAt.isoformat() if alloc.requestedAt else None,
             })
-        
-        return result
+        return out

@@ -75,7 +75,7 @@ async def root():
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     import traceback
-    print(f"ERROR: {str(exc)}")
+    print(f"ERROR: {type(exc).__name__}: {str(exc)}")
     traceback.print_exc()
     return JSONResponse(
         status_code=500,

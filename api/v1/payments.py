@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
+from sqlalchemy.orm import Session
+from sqlalchemy import select
 from database import get_db
 from services.payment import PaymentService
 from schemas.payment import PaymentResponse, PaymentCreate, PaymentSummary, PaymentAdminReview
 from utils.dependencies import get_current_user, get_current_admin, get_current_student
-from prisma import Prisma
+from models import Student, Payment
 from typing import Optional, List
 from pathlib import Path
 from datetime import datetime
@@ -13,20 +15,22 @@ from services.notification import NotificationService
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
 
+def _get_student_by_user_id(db: Session, user_id: str):
+    return db.execute(select(Student).where(Student.userId == user_id)).scalar_one_or_none()
+
+
 @router.get("/student/my-payments", response_model=List[PaymentResponse])
-async def get_my_payments(
-    db: Prisma = Depends(get_db),
+def get_my_payments(
+    db: Session = Depends(get_db),
     current_user = Depends(get_current_student)
 ):
     """Get current student's payments"""
     try:
-        # Get student profile
-        student = await db.student.find_unique(where={"userId": current_user.id})
+        student = _get_student_by_user_id(db, current_user.id)
         if not student:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found")
-        
         service = PaymentService(db)
-        payments = await service.get_student_payments(student.id)
+        payments = service.get_student_payments(student.id)
         return payments
     except HTTPException as e:
         raise e
@@ -35,19 +39,17 @@ async def get_my_payments(
 
 
 @router.get("/student/summary", response_model=PaymentSummary)
-async def get_payment_summary(
-    db: Prisma = Depends(get_db),
+def get_payment_summary(
+    db: Session = Depends(get_db),
     current_user = Depends(get_current_student)
 ):
     """Get payment summary for current student"""
     try:
-        # Get student profile
-        student = await db.student.find_unique(where={"userId": current_user.id})
+        student = _get_student_by_user_id(db, current_user.id)
         if not student:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found")
-        
         service = PaymentService(db)
-        summary = await service.get_payment_summary(student.id)
+        summary = service.get_payment_summary(student.id)
         return summary
     except HTTPException as e:
         raise e
@@ -56,18 +58,19 @@ async def get_payment_summary(
 
 
 @router.get("", response_model=List[dict])
-async def get_all_payments(
-    status: Optional[str] = Query(None),
-    db: Prisma = Depends(get_db),
+def get_all_payments(
+    filter_status: Optional[str] = Query(None, alias="status"),
+    db: Session = Depends(get_db),
     current_user = Depends(get_current_admin)
 ):
     """Get all payments (admin only)"""
     try:
         service = PaymentService(db)
-        payments = await service.get_all_payments(status=status)
+        payments = service.get_all_payments(status=filter_status)
         return payments
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
 
 @router.post("/student/submit", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def student_submit_payment(
@@ -77,15 +80,14 @@ async def student_submit_payment(
     year: int = Form(...),
     method: str = Form("BANK_TRANSFER"),
     proof: UploadFile = File(...),
-    db: Prisma = Depends(get_db),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_student),
 ):
     """Student submits a payment with proof screenshot (multipart/form-data)."""
-    student = await db.student.find_unique(where={"userId": current_user.id})
+    student = _get_student_by_user_id(db, current_user.id)
     if not student:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found")
 
-    # Save upload
     uploads_dir = Path(__file__).resolve().parents[2] / "uploads" / "payment-proofs"
     uploads_dir.mkdir(parents=True, exist_ok=True)
     ext = (Path(proof.filename).suffix or "").lower()
@@ -98,7 +100,7 @@ async def student_submit_payment(
     proof_url = f"/uploads/payment-proofs/{filename}"
 
     service = PaymentService(db)
-    payment = await service.submit_payment_proof(
+    payment = service.submit_payment_proof(
         student_id=student.id,
         amount=amount,
         payment_type=type,
@@ -107,7 +109,7 @@ async def student_submit_payment(
         method=method,
         proof_image_url=proof_url,
     )
-    await NotificationService(db).create_for_roles(
+    NotificationService(db).create_for_roles(
         roles=["ADMIN", "HOSTEL_MANAGER"],
         title="Payment proof submitted",
         message=f"{current_user.name} submitted a payment proof for review.",
@@ -118,27 +120,27 @@ async def student_submit_payment(
 
 
 @router.put("/{payment_id}/review", response_model=dict)
-async def admin_review_payment(
+def admin_review_payment(
     payment_id: str,
     payload: PaymentAdminReview,
-    db: Prisma = Depends(get_db),
+    db: Session = Depends(get_db),
     current_user=Depends(get_current_admin),
 ):
     """Admin approves/rejects a submitted payment."""
-    payment = await db.payment.find_unique(where={"id": payment_id})
+    payment = db.execute(select(Payment).where(Payment.id == payment_id)).scalar_one_or_none()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
     service = PaymentService(db)
-    updated = await service.admin_review_payment(
+    updated = service.admin_review_payment(
         payment_id=payment_id,
         status_value=payload.status,
         reviewed_by=current_user.id,
         rejection_reason=payload.rejectionReason,
     )
-    student = await db.student.find_unique(where={"id": updated["studentId"]}, include={"user": True})
-    if student and student.user:
-        await NotificationService(db).create_for_user(
-            user_id=student.user.id,
+    student = db.execute(select(Student).where(Student.id == updated["studentId"])).scalar_one_or_none()
+    if student:
+        NotificationService(db).create_for_user(
+            user_id=student.userId,
             title="Payment reviewed",
             message=f"Your payment was {updated['status'].lower()}.",
             type_value="SYSTEM",
@@ -148,26 +150,20 @@ async def admin_review_payment(
 
 
 @router.post("/{student_id}", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def create_payment(
+def create_payment(
     student_id: str,
     payment_data: PaymentCreate,
-    db: Prisma = Depends(get_db),
+    db: Session = Depends(get_db),
     current_user = Depends(get_current_admin)
 ):
     """Create a payment record (admin only)"""
     try:
-        # Verify student exists
-        student = await db.student.find_unique(where={"id": student_id})
+        student = db.execute(select(Student).where(Student.id == student_id)).scalar_one_or_none()
         if not student:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
-        
         service = PaymentService(db)
-        payment = await service.create_payment(student_id, payment_data)
-        
-        return {
-            "message": "Payment record created successfully",
-            "payment": payment
-        }
+        payment = service.create_payment(student_id, payment_data)
+        return {"message": "Payment record created successfully", "payment": payment}
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -175,29 +171,23 @@ async def create_payment(
 
 
 @router.put("/{payment_id}/mark-paid", response_model=dict)
-async def mark_payment_paid(
+def mark_payment_paid(
     payment_id: str,
-    db: Prisma = Depends(get_db),
+    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Mark a payment as paid"""
     try:
-        payment = await db.payment.find_unique(where={"id": payment_id})
+        payment = db.execute(select(Payment).where(Payment.id == payment_id)).scalar_one_or_none()
         if not payment:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
-        
-        # Check if user is student making payment or admin
-        student = await db.student.find_unique(where={"userId": current_user.id})
-        if student and student.id != payment.studentId and current_user.role not in ["ADMIN", "HOSTEL_MANAGER"]:
+        student = _get_student_by_user_id(db, current_user.id)
+        role_val = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+        if student and student.id != payment.studentId and role_val not in ["ADMIN", "HOSTEL_MANAGER"]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
-        
         service = PaymentService(db)
-        updated_payment = await service.mark_payment_paid(payment_id)
-        
-        return {
-            "message": "Payment marked as paid",
-            "payment": updated_payment
-        }
+        updated_payment = service.mark_payment_paid(payment_id)
+        return {"message": "Payment marked as paid", "payment": updated_payment}
     except HTTPException as e:
         raise e
     except Exception as e:

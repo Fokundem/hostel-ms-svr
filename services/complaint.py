@@ -1,119 +1,88 @@
-from prisma import Prisma
-from typing import List, Optional
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import select, desc
 from datetime import datetime
+from typing import List, Optional
 
-from utils.exceptions import UnauthorizedException
+from models import Complaint, Student, ComplaintStatusEnum, ComplaintCategoryEnum, ComplaintPriorityEnum
+
+
+def _complaint_to_dict(c: Complaint, include_student: bool = False) -> dict:
+    status_val = c.status.value if hasattr(c.status, "value") else str(c.status)
+    category_val = c.category.value if hasattr(c.category, "value") else str(c.category)
+    priority_val = c.priority.value if hasattr(c.priority, "value") else str(c.priority)
+    out = {
+        "id": c.id,
+        "studentId": c.studentId,
+        "title": c.title,
+        "description": c.description,
+        "category": category_val,
+        "priority": priority_val,
+        "status": status_val,
+        "adminResponse": c.adminResponse,
+        "resolvedAt": c.resolvedAt.isoformat() if c.resolvedAt else None,
+        "createdAt": c.createdAt.isoformat() if c.createdAt else None,
+        "updatedAt": c.updatedAt.isoformat() if c.updatedAt else None,
+    }
+    if include_student and c.student:
+        out["studentName"] = c.student.user.name if c.student.user else None
+        out["roomNumber"] = c.student.room.roomNumber if c.student.room else None
+    return out
 
 
 class ComplaintService:
-    def __init__(self, db: Prisma):
+    def __init__(self, db: Session):
         self.db = db
 
-    async def create_complaint(self, student_id: str, data: dict) -> dict:
-        c = await self.db.complaint.create(
-            data={
-                "studentId": student_id,
-                "title": data["title"],
-                "description": data["description"],
-                "category": data.get("category", "OTHER").upper(),
-                "priority": data.get("priority", "MEDIUM").upper(),
-                "status": "PENDING",
-            }
+    def create_complaint(self, student_id: str, data: dict) -> dict:
+        category = data.get("category", "OTHER")
+        priority = data.get("priority", "MEDIUM")
+        if isinstance(category, str):
+            category = ComplaintCategoryEnum(category) if category in [e.value for e in ComplaintCategoryEnum] else ComplaintCategoryEnum.OTHER
+        if isinstance(priority, str):
+            priority = ComplaintPriorityEnum(priority) if priority in [e.value for e in ComplaintPriorityEnum] else ComplaintPriorityEnum.MEDIUM
+        c = Complaint(
+            studentId=student_id,
+            title=data["title"],
+            description=data["description"],
+            category=category,
+            priority=priority,
+            status=ComplaintStatusEnum.PENDING,
         )
-        return {
-            "id": c.id,
-            "studentId": c.studentId,
-            "title": c.title,
-            "description": c.description,
-            "category": c.category,
-            "priority": c.priority,
-            "status": c.status,
-            "adminResponse": c.adminResponse,
-            "resolvedAt": c.resolvedAt,
-            "createdAt": c.createdAt,
-            "updatedAt": c.updatedAt,
-        }
+        self.db.add(c)
+        self.db.commit()
+        self.db.refresh(c)
+        return _complaint_to_dict(c)
 
-    async def list_all(self, status: Optional[str] = None) -> List[dict]:
-        filters = {}
+    def list_all(self, status: Optional[str] = None) -> List[dict]:
+        q = select(Complaint).options(
+            joinedload(Complaint.student).joinedload(Student.user),
+            joinedload(Complaint.student).joinedload(Student.room),
+        ).order_by(desc(Complaint.createdAt))
         if status:
-            filters["status"] = status.upper()
+            q = q.where(Complaint.status == ComplaintStatusEnum(status))
+        complaints = self.db.execute(q).unique().scalars().all()
+        return [_complaint_to_dict(c, include_student=True) for c in complaints]
 
-        complaints = await self.db.complaint.find_many(
-            where=filters,
-            include={"student": {"include": {"user": True, "room": True}}},
-            order={"createdAt": "desc"},
-        )
+    def list_for_student(self, student_id: str) -> List[dict]:
+        complaints = self.db.execute(
+            select(Complaint).where(Complaint.studentId == student_id).order_by(desc(Complaint.createdAt))
+        ).scalars().all()
+        return [_complaint_to_dict(c) for c in complaints]
 
-        result = []
-        for c in complaints:
-            result.append(
-                {
-                    "id": c.id,
-                    "studentId": c.studentId,
-                    "studentName": c.student.user.name,
-                    "roomNumber": c.student.room.roomNumber if c.student.room else None,
-                    "title": c.title,
-                    "description": c.description,
-                    "category": c.category,
-                    "priority": c.priority,
-                    "status": c.status,
-                    "adminResponse": c.adminResponse,
-                    "resolvedAt": c.resolvedAt,
-                    "createdAt": c.createdAt,
-                    "updatedAt": c.updatedAt,
-                }
-            )
-        return result
-
-    async def list_for_student(self, student_id: str) -> List[dict]:
-        complaints = await self.db.complaint.find_many(
-            where={"studentId": student_id},
-            order={"createdAt": "desc"},
-        )
-        return [
-            {
-                "id": c.id,
-                "studentId": c.studentId,
-                "title": c.title,
-                "description": c.description,
-                "category": c.category,
-                "priority": c.priority,
-                "status": c.status,
-                "adminResponse": c.adminResponse,
-                "resolvedAt": c.resolvedAt,
-                "createdAt": c.createdAt,
-                "updatedAt": c.updatedAt,
-            }
-            for c in complaints
-        ]
-
-    async def admin_update(self, complaint_id: str, data: dict) -> dict:
-        update_data = {}
+    def admin_update(self, complaint_id: str, data: dict) -> dict:
+        c = self.db.execute(select(Complaint).where(Complaint.id == complaint_id)).scalar_one_or_none()
+        if not c:
+            raise ValueError("Complaint not found")
         if data.get("status") is not None:
-            update_data["status"] = data["status"].upper()
-            if update_data["status"] == "RESOLVED":
-                update_data["resolvedAt"] = datetime.utcnow()
+            s = data["status"]
+            c.status = ComplaintStatusEnum(s) if isinstance(s, str) else s
+            if c.status == ComplaintStatusEnum.RESOLVED:
+                c.resolvedAt = datetime.utcnow()
         if data.get("priority") is not None:
-            update_data["priority"] = data["priority"].upper()
+            p = data["priority"]
+            c.priority = ComplaintPriorityEnum(p) if isinstance(p, str) else p
         if data.get("adminResponse") is not None:
-            update_data["adminResponse"] = data["adminResponse"]
-
-        c = await self.db.complaint.update(
-            where={"id": complaint_id},
-            data=update_data,
-        )
-        return {
-            "id": c.id,
-            "studentId": c.studentId,
-            "title": c.title,
-            "description": c.description,
-            "category": c.category,
-            "priority": c.priority,
-            "status": c.status,
-            "adminResponse": c.adminResponse,
-            "resolvedAt": c.resolvedAt,
-            "createdAt": c.createdAt,
-            "updatedAt": c.updatedAt,
-        }
-
+            c.adminResponse = data["adminResponse"]
+        self.db.commit()
+        self.db.refresh(c)
+        return _complaint_to_dict(c)

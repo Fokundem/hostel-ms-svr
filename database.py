@@ -1,27 +1,17 @@
-from prisma import Prisma
-from typing import Optional
-
-prisma: Optional[Prisma] = None
+from db import engine, Base, get_db_session
 
 
 async def connect_db():
-    """Connect to the database on startup"""
-    global prisma
-    prisma = Prisma()
-    await prisma.connect()
-    print("✓ Database connected successfully")
+    """Startup hook: ensure SQLAlchemy tables exist."""
+    Base.metadata.create_all(bind=engine)
+    print("✓ Database initialized (SQLAlchemy)")
 
 
 async def disconnect_db():
-    """Disconnect from the database on shutdown"""
-    global prisma
-    if prisma:
-        await prisma.disconnect()
-        print("✓ Database disconnected")
+    """Shutdown hook."""
+    print("✓ Database shutdown complete")
 
 
-def get_db() -> Prisma:
-    """Get the database connection"""
-    if prisma is None:
-        raise RuntimeError("Database not initialized")
-    return prisma
+def get_db():
+    """FastAPI dependency: SQLAlchemy session."""
+    yield from get_db_session()
