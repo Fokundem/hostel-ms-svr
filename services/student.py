@@ -112,10 +112,16 @@ class StudentService:
             room = student.room
             room.occupied = max(0, (room.occupied or 0) - 1)
             room.status = RoomStatusEnum.AVAILABLE if (room.occupied or 0) < room.capacity else RoomStatusEnum.FULL
-        # Delete student first (DB cascade will remove Payment, Complaint, Visitor, RoomAllocation)
-        # Then delete user (DB cascade will remove Notification)
+            
+        from models import Payment, Complaint, Visitor, RoomAllocation, Notification
+        # Delete related records explicitly to prevent IntegrityError 
+        self.db.execute(Payment.__table__.delete().where(Payment.studentId == student_id))
+        self.db.execute(Complaint.__table__.delete().where(Complaint.studentId == student_id))
+        self.db.execute(Visitor.__table__.delete().where(Visitor.studentId == student_id))
+        self.db.execute(RoomAllocation.__table__.delete().where(RoomAllocation.studentId == student_id))
+
+        user_id = student.userId
         self.db.delete(student)
-        user = self.db.execute(select(User).where(User.id == student.userId)).scalar_one_or_none()
-        if user:
-            self.db.delete(user)
+        self.db.execute(Notification.__table__.delete().where(Notification.userId == user_id))
+        self.db.execute(User.__table__.delete().where(User.id == user_id))
         self.db.commit()

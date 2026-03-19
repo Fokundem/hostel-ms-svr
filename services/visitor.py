@@ -22,6 +22,13 @@ class VisitorService:
         q = q.order_by(desc(Visitor.createdAt))
 
         rows = self.db.execute(q).all()
+        
+        admin_ids = {v.approvedBy for v, _ in rows if v.approvedBy}
+        admin_names = {}
+        if admin_ids:
+            admins = self.db.execute(select(User.id, User.name).where(User.id.in_(admin_ids))).all()
+            admin_names = {a.id: a.name for a in admins}
+            
         return [
             {
                 "id": v.id,
@@ -35,6 +42,7 @@ class VisitorService:
                 "requestedAt": v.requestedAt,
                 "approvedAt": v.approvedAt,
                 "approvedBy": v.approvedBy,
+                "approvedByName": admin_names.get(v.approvedBy),
                 "rejectionReason": v.rejectionReason,
                 "entryTime": v.entryTime,
                 "exitTime": v.exitTime,
@@ -47,6 +55,13 @@ class VisitorService:
         visitors = self.db.execute(
             select(Visitor).where(Visitor.studentId == student_id).order_by(desc(Visitor.createdAt))
         ).scalars().all()
+        
+        admin_ids = {v.approvedBy for v in visitors if v.approvedBy}
+        admin_names = {}
+        if admin_ids:
+            admins = self.db.execute(select(User.id, User.name).where(User.id.in_(admin_ids))).all()
+            admin_names = {a.id: a.name for a in admins}
+            
         return [
             {
                 "id": v.id,
@@ -59,6 +74,7 @@ class VisitorService:
                 "requestedAt": v.requestedAt,
                 "approvedAt": v.approvedAt,
                 "approvedBy": v.approvedBy,
+                "approvedByName": admin_names.get(v.approvedBy),
                 "rejectionReason": v.rejectionReason,
                 "entryTime": v.entryTime,
                 "exitTime": v.exitTime,

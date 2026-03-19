@@ -23,6 +23,7 @@ def _payment_to_dict(payment: Payment, include_student_name: bool = False) -> di
         "rejectionReason": getattr(payment, "rejectionReason", None),
         "reviewedAt": payment.reviewedAt.isoformat() if payment.reviewedAt else None,
         "reviewedBy": getattr(payment, "reviewedBy", None),
+        "reviewedByName": getattr(payment, "_reviewedByName", None),
         "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
         "createdAt": payment.createdAt.isoformat() if payment.createdAt else None,
     }
@@ -39,6 +40,17 @@ class PaymentService:
         payments = self.db.execute(
             select(Payment).where(Payment.studentId == student_id).order_by(desc(Payment.createdAt))
         ).scalars().all()
+        
+        admin_ids = {p.reviewedBy for p in payments if p.reviewedBy}
+        admin_names = {}
+        if admin_ids:
+            from models import User
+            admins = self.db.execute(select(User.id, User.name).where(User.id.in_(admin_ids))).all()
+            admin_names = {a.id: a.name for a in admins}
+            
+        for p in payments:
+            setattr(p, "_reviewedByName", admin_names.get(p.reviewedBy) if p.reviewedBy else None)
+            
         return [_payment_to_dict(p) for p in payments]
 
     def get_payment_summary(self, student_id: str) -> dict:
@@ -138,4 +150,15 @@ class PaymentService:
         if status:
             q = q.where(Payment.status == PaymentStatusEnum(status))
         payments = self.db.execute(q).unique().scalars().all()
+        
+        admin_ids = {p.reviewedBy for p in payments if p.reviewedBy}
+        admin_names = {}
+        if admin_ids:
+            from models import User
+            admins = self.db.execute(select(User.id, User.name).where(User.id.in_(admin_ids))).all()
+            admin_names = {a.id: a.name for a in admins}
+            
+        for p in payments:
+            setattr(p, "_reviewedByName", admin_names.get(p.reviewedBy) if p.reviewedBy else None)
+            
         return [_payment_to_dict(p, include_student_name=True) for p in payments]

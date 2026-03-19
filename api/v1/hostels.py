@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from database import get_db
-from utils.dependencies import get_current_admin
+from utils.dependencies import get_current_admin, get_current_user
 from services.hostel import HostelService
 from schemas.hostels import HostelCreate, HostelResponse
 
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/hostels", tags=["Hostels"])
 @router.get("", response_model=list[HostelResponse])
 def list_hostels(
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_admin),
+    current_user=Depends(get_current_user),
 ):
     service = HostelService(db)
     return service.list_hostels()

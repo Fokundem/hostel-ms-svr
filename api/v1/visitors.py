@@ -95,3 +95,24 @@ async def decide_visitor(
     except Exception:
         raise HTTPException(status_code=500, detail="Error updating visitor request")
 
+
+@router.delete("/{visitor_id}", response_model=dict)
+async def delete_visitor_request(
+    visitor_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_student),
+):
+    try:
+        student = db.execute(select(Student).where(Student.userId == current_user.id)).scalar_one_or_none()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile not found")
+        service = VisitorService(db)
+        service.delete_visitor(visitor_id, student.id)
+        return {"message": "Visitor request deleted successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException as e:
+        raise e
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error deleting visitor request")
+

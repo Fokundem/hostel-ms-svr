@@ -92,6 +92,13 @@ class AllocationService:
             q = q.where(RoomAllocation.status == AllocationStatusEnum(status))
         result = self.db.execute(q).unique().scalars().all()
 
+        admin_ids = {alloc.approvedBy for alloc in result if alloc.approvedBy}
+        admin_names = {}
+        if admin_ids:
+            from models import User
+            admins = self.db.execute(select(User.id, User.name).where(User.id.in_(admin_ids))).all()
+            admin_names = {a.id: a.name for a in admins}
+
         out = []
         for alloc in result:
             if hostel_id and alloc.room.hostelId != hostel_id:
@@ -140,6 +147,7 @@ class AllocationService:
                 "requestedAt": alloc.requestedAt.isoformat() if alloc.requestedAt else None,
                 "approvedAt": alloc.approvedAt.isoformat() if alloc.approvedAt else None,
                 "approvedBy": alloc.approvedBy,
+                "approvedByName": admin_names.get(alloc.approvedBy) if alloc.approvedBy else None,
                 "rejectionReason": alloc.rejectionReason,
                 "student": student_resp,
                 "room": room_resp,
@@ -222,6 +230,14 @@ class AllocationService:
         )
         if not allocation:
             return None
+            
+        admin_name = None
+        if allocation.approvedBy:
+            from models import User
+            admin = self.db.execute(select(User.name).where(User.id == allocation.approvedBy)).scalar_one_or_none()
+            if admin:
+                admin_name = admin
+
         room = allocation.room
         status_val = allocation.status.value if hasattr(allocation.status, "value") else str(allocation.status)
         room_status = room.status.value if hasattr(room.status, "value") else str(room.status)
@@ -233,6 +249,7 @@ class AllocationService:
             "requestedAt": allocation.requestedAt,
             "approvedAt": allocation.approvedAt,
             "approvedBy": allocation.approvedBy,
+            "approvedByName": admin_name,
             "rejectionReason": allocation.rejectionReason,
             "student": {
                 "id": allocation.student.id,
