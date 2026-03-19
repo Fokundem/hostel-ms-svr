@@ -98,28 +98,51 @@ class AllocationService:
                 continue
             status_val = alloc.status.value if hasattr(alloc.status, "value") else str(alloc.status)
             room_status = alloc.room.status.value if hasattr(alloc.room.status, "value") else str(alloc.room.status)
+            # Build full student response
+            student = alloc.student
+            user = student.user
+            student_resp = {
+                "id": student.id,
+                "userId": student.userId,
+                "name": user.name,
+                "email": user.email,
+                "matricule": student.matricule,
+                "department": student.department,
+                "level": student.level,
+                "phone": user.phone,
+                "guardianContact": student.guardianContact,
+                "roomId": student.roomId,
+                "assignedRoom": student.assignedRoom if hasattr(student, "assignedRoom") else None,
+                "role": user.role.value if hasattr(user.role, "value") else str(user.role),
+                "status": user.status.value if hasattr(user.status, "value") else str(user.status),
+                "createdAt": user.createdAt.isoformat() if user.createdAt else None,
+            }
+            # Build full room response
+            room = alloc.room
+            room_resp = {
+                "id": room.id,
+                "roomNumber": room.roomNumber,
+                "floor": room.floor,
+                "block": room.block,
+                "hostelId": room.hostelId,
+                "capacity": room.capacity,
+                "occupied": room.occupied,
+                "status": room_status,
+                "amenities": room.amenities if room.amenities is not None else [],
+                "price": room.price,
+                "createdAt": room.createdAt.isoformat() if room.createdAt else None,
+            }
             out.append({
                 "id": alloc.id,
                 "studentId": alloc.studentId,
-                "studentName": alloc.student.user.name,
                 "roomId": alloc.roomId,
-                "roomNumber": alloc.room.roomNumber,
-                "floor": alloc.room.floor,
                 "status": status_val,
                 "requestedAt": alloc.requestedAt.isoformat() if alloc.requestedAt else None,
                 "approvedAt": alloc.approvedAt.isoformat() if alloc.approvedAt else None,
                 "approvedBy": alloc.approvedBy,
                 "rejectionReason": alloc.rejectionReason,
-                "room": {
-                    "id": alloc.room.id,
-                    "roomNumber": alloc.room.roomNumber,
-                    "floor": alloc.room.floor,
-                    "block": alloc.room.block,
-                    "capacity": alloc.room.capacity,
-                    "occupied": alloc.room.occupied,
-                    "price": alloc.room.price,
-                    "status": room_status,
-                },
+                "student": student_resp,
+                "room": room_resp,
             })
         return out
 

@@ -1,9 +1,7 @@
 from __future__ import annotations
-
 from datetime import datetime
 import uuid
 from enum import Enum as PyEnum
-
 from sqlalchemy import (
     Column,
     String,
@@ -16,12 +14,9 @@ from sqlalchemy import (
     JSON,
 )
 from sqlalchemy.orm import relationship
-
 from db import Base
 
-
 def _id() -> str:
-    # Prisma used cuid(); uuid is fine for uniqueness.
     return uuid.uuid4().hex
 
 
