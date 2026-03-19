@@ -38,6 +38,11 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(..., min_length=6)
 
 
+class NewPasswordResetRequest(BaseModel):
+    email: EmailStr
+    new_password: str = Field(..., min_length=6, description="New password must be at least 6 characters")
+
+
 # ============ User Schemas ============
 
 class UserResponse(BaseModel):

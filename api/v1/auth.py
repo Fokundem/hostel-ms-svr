@@ -7,6 +7,8 @@ from schemas.auth import (
     LoginResponse,
     UserResponse,
     UserUpdateRequest,
+    PasswordResetRequest,
+    NewPasswordResetRequest,
 )
 from utils.dependencies import get_current_user
 from utils.exceptions import InvalidCredentialsException, UserAlreadyExistsException
@@ -91,3 +93,33 @@ async def update_current_user(
 async def logout(current_user = Depends(get_current_user)):
     """Logout user (client should discard token)"""
     return {"message": "Logged out successfully"}
+
+
+@router.post("/verify-email")
+async def verify_email(
+    data: PasswordResetRequest,
+    db: Session = Depends(get_db)
+):
+    """Check if an email address is registered"""
+    try:
+        service = AuthService(db)
+        result = service.verify_email(data.email)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.post("/reset-password")
+async def reset_password(
+    data: NewPasswordResetRequest,
+    db: Session = Depends(get_db)
+):
+    """Reset user password with email verification"""
+    try:
+        service = AuthService(db)
+        result = service.reset_password(data.email, data.new_password)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

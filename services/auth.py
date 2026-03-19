@@ -147,3 +147,21 @@ class AuthService:
             "avatar": user.avatar,
             "status": user.status.value,
         }
+
+    def verify_email(self, email: str) -> dict:
+        """Check if a user with the given email exists"""
+        user = self.db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if not user:
+            return {"exists": False}
+        return {"exists": True, "name": user.name}
+
+    def reset_password(self, email: str, new_password: str) -> dict:
+        """Reset a user's password by email"""
+        user = self.db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if not user:
+            raise ValueError("No account found with this email address")
+
+        user.password = hash_password(new_password)
+        self.db.commit()
+
+        return {"message": "Password reset successfully"}
