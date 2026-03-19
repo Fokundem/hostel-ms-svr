@@ -9,7 +9,6 @@ class RoomCreate(BaseModel):
     roomNumber: str
     floor: str
     block: str
-    hostelId: str
     capacity: int
     amenities: List[str] = []
     price: float

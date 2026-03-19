@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from app.database import get_db
-from app.services.payment import PaymentService
-from app.schemas.payment import PaymentResponse, PaymentCreate, PaymentSummary
-from app.utils.dependencies import get_current_user, get_current_admin, get_current_student
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
+from database import get_db
+from services.payment import PaymentService
+from schemas.payment import PaymentResponse, PaymentCreate, PaymentSummary, PaymentAdminReview
+from utils.dependencies import get_current_user, get_current_admin, get_current_student
 from prisma import Prisma
 from typing import Optional, List
+from pathlib import Path
+from datetime import datetime
+import secrets
+from services.notification import NotificationService
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
@@ -64,6 +68,83 @@ async def get_all_payments(
         return payments
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@router.post("/student/submit", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def student_submit_payment(
+    amount: float = Form(...),
+    type: str = Form("HOSTEL_FEE"),
+    month: int = Form(...),
+    year: int = Form(...),
+    method: str = Form("BANK_TRANSFER"),
+    proof: UploadFile = File(...),
+    db: Prisma = Depends(get_db),
+    current_user=Depends(get_current_student),
+):
+    """Student submits a payment with proof screenshot (multipart/form-data)."""
+    student = await db.student.find_unique(where={"userId": current_user.id})
+    if not student:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found")
+
+    # Save upload
+    uploads_dir = Path(__file__).resolve().parents[2] / "uploads" / "payment-proofs"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    ext = (Path(proof.filename).suffix or "").lower()
+    if ext not in [".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf"]:
+        raise HTTPException(status_code=400, detail="Unsupported proof file type")
+    filename = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(8)}{ext}"
+    file_path = uploads_dir / filename
+    contents = await proof.read()
+    file_path.write_bytes(contents)
+    proof_url = f"/uploads/payment-proofs/{filename}"
+
+    service = PaymentService(db)
+    payment = await service.submit_payment_proof(
+        student_id=student.id,
+        amount=amount,
+        payment_type=type,
+        month=month,
+        year=year,
+        method=method,
+        proof_image_url=proof_url,
+    )
+    await NotificationService(db).create_for_roles(
+        roles=["ADMIN", "HOSTEL_MANAGER"],
+        title="Payment proof submitted",
+        message=f"{current_user.name} submitted a payment proof for review.",
+        type_value="SYSTEM",
+        data={"link": "/admin/payments", "paymentId": payment["id"]},
+    )
+    return {"message": "Payment submitted for review", "payment": payment}
+
+
+@router.put("/{payment_id}/review", response_model=dict)
+async def admin_review_payment(
+    payment_id: str,
+    payload: PaymentAdminReview,
+    db: Prisma = Depends(get_db),
+    current_user=Depends(get_current_admin),
+):
+    """Admin approves/rejects a submitted payment."""
+    payment = await db.payment.find_unique(where={"id": payment_id})
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    service = PaymentService(db)
+    updated = await service.admin_review_payment(
+        payment_id=payment_id,
+        status_value=payload.status,
+        reviewed_by=current_user.id,
+        rejection_reason=payload.rejectionReason,
+    )
+    student = await db.student.find_unique(where={"id": updated["studentId"]}, include={"user": True})
+    if student and student.user:
+        await NotificationService(db).create_for_user(
+            user_id=student.user.id,
+            title="Payment reviewed",
+            message=f"Your payment was {updated['status'].lower()}.",
+            type_value="SYSTEM",
+            data={"link": "/student/payments", "paymentId": updated["id"]},
+        )
+    return {"message": "Payment reviewed", "payment": updated}
 
 
 @router.post("/{student_id}", response_model=dict, status_code=status.HTTP_201_CREATED)

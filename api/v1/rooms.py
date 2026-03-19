@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from app.database import get_db
-from app.services.room import RoomService
-from app.schemas.room import RoomResponse, RoomDetailResponse, RoomCreate, RoomUpdate
-from app.utils.dependencies import get_current_user, get_current_admin
+from database import get_db
+from services.room import RoomService
+from schemas.room import RoomResponse, RoomDetailResponse, RoomCreate, RoomUpdate
+from utils.dependencies import get_current_user, get_current_admin
 from prisma import Prisma
 from typing import Optional, List
 
@@ -59,16 +59,26 @@ async def get_room_details(
 
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def create_room(
-    hostel_id: str,
     room_data: RoomCreate,
+    hostel_id: Optional[str] = Query(None),
     db: Prisma = Depends(get_db),
     current_user = Depends(get_current_admin)
 ):
     """Create a new room (admin only)"""
     try:
+        if not hostel_id:
+            hostel = await db.hostel.find_first()
+            if not hostel:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No hostel found. Create a hostel first.",
+                )
+            hostel_id = hostel.id
         service = RoomService(db)
         room = await service.create_room(hostel_id, room_data)
         return {"message": "Room created successfully", "room": room}
+    except HTTPException as e:
+        raise e
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 

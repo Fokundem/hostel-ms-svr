@@ -1,6 +1,6 @@
 from prisma import Prisma
-from app.utils.exceptions import RoomNotFoundException, RoomFullException, AllocationNotFoundException
-from app.schemas.room import RoomCreate, RoomUpdate, RoomAllocationCreate
+from utils.exceptions import RoomNotFoundException, RoomFullException, AllocationNotFoundException
+from schemas.room import RoomCreate, RoomUpdate, RoomAllocationCreate
 from typing import Optional, List
 
 

@@ -33,7 +33,7 @@ FastAPI backend server for the HostelMS management system with JWT authenticatio
 ### 1. Clone and Navigate
 
 ```bash
-cd hostel_ms_sev
+cd hostel-ms-svr
 ```
 
 ### 2. Create Virtual Environment
@@ -108,10 +108,10 @@ SECRET_KEY=your-strong-secret-key-here
 
 ```bash
 # Development (with auto-reload)
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # Or using the main script
-python app/main.py
+python main.py
 ```
 
 The server will start at: **http://localhost:8000**
@@ -189,27 +189,43 @@ curl -X GET http://localhost:8000/api/v1/auth/me \
 ## Project Structure
 
 ```
-app/
-├── main.py              # Entry point
-├── settings.py          # Configuration
-├── database.py          # Database connection
-├── api/
-│   └── v1/
-│       ├── auth.py      # Authentication routes
-│       ├── rooms.py     # Room management (coming soon)
-│       ├── allocations.py # Room allocation flow (coming soon)
-│       └── ...
-├── services/
-│   ├── auth.py         # Auth business logic
-│   ├── room.py         # Room service (coming soon)
-│   └── ...
-├── schemas/
-│   └── auth.py         # Request/response models
-├── utils/
-│   ├── security.py     # JWT & password hashing
-│   ├── dependencies.py # FastAPI dependencies
-│   └── exceptions.py   # Custom exceptions
-└── websockets/         # WebSocket handlers (coming soon)
+main.py                 # Entry point
+settings.py             # Configuration
+database.py             # Database connection
+api/
+└── v1/
+    ├── auth.py         # Authentication routes
+    ├── rooms.py        # Room management
+    ├── allocations.py  # Room allocation flow
+    ├── payments.py     # Payments
+    ├── dashboard.py    # Admin dashboard stats
+    ├── students.py     # Student management
+    ├── complaints.py   # Complaints management
+    ├── visitors.py     # Visitor management
+    └── hostels.py      # Hostel setup
+services/
+├── auth.py
+├── room.py
+├── allocation.py
+├── payment.py
+├── dashboard.py
+├── student.py
+├── complaint.py
+├── visitor.py
+└── hostel.py
+schemas/
+├── auth.py
+├── room.py
+├── payment.py
+├── students.py
+├── complaints.py
+├── visitors.py
+└── hostels.py
+utils/
+├── security.py
+├── dependencies.py
+└── exceptions.py
+websockets/             # WebSocket handlers (ready for chat)
 
 prisma/
 └── schema.prisma       # Database schema
@@ -297,3 +313,7 @@ python -m uvicorn app.main:app --reload --port 8001
 ## License
 
 MIT
+
+source venv/bin/activate
+env -u DATABASE_URL DATABASE_URL="postgresql://postgres:password@localhost:5432/postgres" \
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --ws wsproto

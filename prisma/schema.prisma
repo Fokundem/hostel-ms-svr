@@ -140,6 +140,11 @@ model Payment {
   month     Int
   year      Int
   status    PaymentStatus   @default(PENDING)
+  method    PaymentMethod   @default(BANK_TRANSFER)
+  proofImageUrl String?
+  rejectionReason String?
+  reviewedAt DateTime?
+  reviewedBy String?
   paidAt    DateTime?
 
   createdAt DateTime        @default(now())
@@ -178,9 +183,13 @@ model Visitor {
   student     Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
   roomNumber  String
 
-  entryTime   DateTime
+  status      VisitorRequestStatus @default(PENDING)
+  requestedAt DateTime  @default(now())
+  approvedAt  DateTime?
+  approvedBy  String?
+  rejectionReason String?
+  entryTime   DateTime?
   exitTime    DateTime?
-  status      VisitorStatus @default(IN)
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -317,9 +326,20 @@ enum PaymentType {
   OTHER
 }
 
+enum PaymentMethod {
+  BANK_TRANSFER
+  POS
+  CASH
+  MOBILE_MONEY
+  OTHER
+}
+
 enum PaymentStatus {
-  PAID
   PENDING
+  SUBMITTED
+  APPROVED
+  PAID
+  REJECTED
   OVERDUE
 }
 
@@ -343,9 +363,10 @@ enum ComplaintStatus {
   RESOLVED
 }
 
-enum VisitorStatus {
-  IN
-  OUT
+enum VisitorRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum NotificationType {

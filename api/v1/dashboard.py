@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from app.database import get_db
-from app.services.dashboard import DashboardService
-from app.utils.dependencies import get_current_admin
+from database import get_db
+from services.dashboard import DashboardService
+from utils.dependencies import get_current_admin
 from prisma import Prisma
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])

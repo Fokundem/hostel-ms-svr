@@ -1,15 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from app.database import get_db
-from app.services.auth import AuthService
-from app.schemas.auth import (
+from database import get_db
+from services.auth import AuthService
+from schemas.auth import (
     RegisterRequest,
     LoginRequest,
     LoginResponse,
     UserResponse,
     UserUpdateRequest,
 )
-from app.utils.dependencies import get_current_user
-from app.utils.exceptions import InvalidCredentialsException, UserAlreadyExistsException
+from utils.dependencies import get_current_user
+from utils.exceptions import InvalidCredentialsException, UserAlreadyExistsException
 from prisma import Prisma
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])

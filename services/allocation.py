@@ -1,6 +1,6 @@
 from prisma import Prisma
-from app.utils.exceptions import AllocationNotFoundException, RoomNotFoundException, RoomFullException
-from app.schemas.room import RoomAllocationCreate, RoomAllocationUpdateStatus
+from utils.exceptions import AllocationNotFoundException, RoomNotFoundException, RoomFullException
+from schemas.room import RoomAllocationCreate, RoomAllocationUpdateStatus
 from datetime import datetime
 from typing import Optional, List
 
@@ -21,7 +21,7 @@ class AllocationService:
             raise RoomFullException(f"Room is {room.status.lower()}")
         
         # Check if student already has pending allocation
-        existing = await self.db.roomAllocation.find_first(
+        existing = await self.db.roomallocation.find_first(
             where={
                 "studentId": student_id,
                 "status": "PENDING"
@@ -31,7 +31,7 @@ class AllocationService:
             raise ValueError("You already have a pending room allocation request")
         
         # Create allocation request
-        allocation = await self.db.roomAllocation.create(
+        allocation = await self.db.roomallocation.create(
             data={
                 "studentId": student_id,
                 "userId": user_id,
@@ -50,7 +50,7 @@ class AllocationService:
 
     async def get_student_allocation(self, student_id: str) -> Optional[dict]:
         """Get student's room allocation"""
-        allocation = await self.db.roomAllocation.find_first(
+        allocation = await self.db.roomallocation.find_first(
             where={"studentId": student_id},
             order={"requestedAt": "desc"},
             include={"room": True}
@@ -76,6 +76,7 @@ class AllocationService:
                 "status": allocation.room.status,
                 "amenities": allocation.room.amenities,
                 "price": allocation.room.price,
+                "createdAt": allocation.room.createdAt.isoformat(),
             }
         }
 
@@ -85,7 +86,7 @@ class AllocationService:
         if status:
             filters["status"] = status
         
-        allocations = await self.db.roomAllocation.find_many(
+        allocations = await self.db.roomallocation.find_many(
             where=filters,
             include={"student": True, "room": True},
             order={"requestedAt": "desc"}
@@ -124,7 +125,7 @@ class AllocationService:
 
     async def approve_allocation(self, allocation_id: str, approved_by: str) -> dict:
         """Admin approves a room allocation"""
-        allocation = await self.db.roomAllocation.find_unique(
+        allocation = await self.db.roomallocation.find_unique(
             where={"id": allocation_id},
             include={"room": True, "student": True}
         )
@@ -140,7 +141,7 @@ class AllocationService:
             raise RoomFullException("Room is no longer available")
         
         # Update allocation status
-        updated_allocation = await self.db.roomAllocation.update(
+        updated_allocation = await self.db.roomallocation.update(
             where={"id": allocation_id},
             data={
                 "status": "APPROVED",
@@ -179,7 +180,7 @@ class AllocationService:
 
     async def reject_allocation(self, allocation_id: str, approved_by: str, reason: str) -> dict:
         """Admin rejects a room allocation"""
-        allocation = await self.db.roomAllocation.find_unique(where={"id": allocation_id})
+        allocation = await self.db.roomallocation.find_unique(where={"id": allocation_id})
         
         if not allocation:
             raise AllocationNotFoundException()
@@ -188,7 +189,7 @@ class AllocationService:
             raise ValueError(f"Allocation is already {allocation.status.lower()}")
         
         # Update allocation status
-        updated_allocation = await self.db.roomAllocation.update(
+        updated_allocation = await self.db.roomallocation.update(
             where={"id": allocation_id},
             data={
                 "status": "REJECTED",
@@ -207,7 +208,7 @@ class AllocationService:
 
     async def get_pending_allocations(self, hostel_id: Optional[str] = None) -> List[dict]:
         """Get pending allocation requests for admin/hostel manager"""
-        allocations = await self.db.roomAllocation.find_many(
+        allocations = await self.db.roomallocation.find_many(
             where={"status": "PENDING"},
             include={"student": True, "room": True},
             order={"requestedAt": "asc"}

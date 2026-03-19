@@ -1,9 +1,9 @@
 from prisma import Prisma
-from app.utils.security import hash_password, verify_password, create_access_token
-from app.utils.exceptions import InvalidCredentialsException, UserAlreadyExistsException
-from app.schemas.auth import RegisterRequest, LoginRequest
+from utils.security import hash_password, verify_password, create_access_token
+from utils.exceptions import InvalidCredentialsException, UserAlreadyExistsException
+from schemas.auth import RegisterRequest, LoginRequest
 from datetime import timedelta
-from app.settings import settings
+from settings import settings
 
 
 class AuthService:

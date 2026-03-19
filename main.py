@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
-from app.database import connect_db, disconnect_db
-from app.settings import settings
-from app.api.v1 import auth, rooms, allocations, payments, dashboard
+from database import connect_db, disconnect_db
+from settings import settings
+from api.v1 import auth, rooms, allocations, payments, dashboard, students, complaints, visitors, hostels, notifications
+from pathlib import Path
 
 # Lifespan events
 @asynccontextmanager
@@ -32,6 +34,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve uploaded files (payment proofs, etc.)
+uploads_dir = Path(__file__).resolve().parent / "uploads"
+uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+
 
 # Health check endpoint
 @app.get("/health")
@@ -46,6 +53,11 @@ app.include_router(rooms.router, prefix=settings.API_V1_STR)
 app.include_router(allocations.router, prefix=settings.API_V1_STR)
 app.include_router(payments.router, prefix=settings.API_V1_STR)
 app.include_router(dashboard.router, prefix=settings.API_V1_STR)
+app.include_router(students.router, prefix=settings.API_V1_STR)
+app.include_router(complaints.router, prefix=settings.API_V1_STR)
+app.include_router(visitors.router, prefix=settings.API_V1_STR)
+app.include_router(hostels.router, prefix=settings.API_V1_STR)
+app.include_router(notifications.router, prefix=settings.API_V1_STR)
 
 
 # Root endpoint
@@ -75,7 +87,7 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "app.main:app",
+        "main:app",
         host="0.0.0.0",
         port=8000,
         reload=settings.DEBUG,

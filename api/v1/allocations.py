@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from app.database import get_db
-from app.services.allocation import AllocationService
-from app.schemas.room import RoomAllocationResponse, RoomAllocationDetailResponse, RoomAllocationCreate, StudentAllocationResponse
-from app.utils.dependencies import get_current_user, get_current_admin, get_current_student
+from database import get_db
+from services.allocation import AllocationService
+from schemas.room import RoomAllocationResponse, RoomAllocationDetailResponse, RoomAllocationCreate, StudentAllocationResponse
+from utils.dependencies import get_current_user, get_current_admin, get_current_student
 from prisma import Prisma
+from prisma.errors import PrismaError
 from typing import Optional, List
+from services.notification import NotificationService
 
 router = APIRouter(prefix="/allocations", tags=["Room Allocations"])
 
@@ -24,6 +26,13 @@ async def request_room(
         
         service = AllocationService(db)
         allocation = await service.request_room(student.id, current_user.id, allocation_data.roomId)
+        await NotificationService(db).create_for_roles(
+            roles=["ADMIN", "HOSTEL_MANAGER"],
+            title="New room allocation request",
+            message=f"{current_user.name} requested a room allocation.",
+            type_value="SYSTEM",
+            data={"link": "/admin/allocations", "allocationId": allocation["id"]},
+        )
         
         return {
             "message": "Room request submitted successfully",
@@ -32,6 +41,9 @@ async def request_room(
     except HTTPException as e:
         raise e
     except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except PrismaError as e:
+        # Most common: unique constraint, missing FK, etc.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -55,6 +67,8 @@ async def get_my_allocation(
         return allocation
     except HTTPException as e:
         raise e
+    except PrismaError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
@@ -98,7 +112,7 @@ async def get_allocation_details(
 ):
     """Get allocation details (admin only)"""
     try:
-        allocation = await db.roomAllocation.find_unique(
+        allocation = await db.roomallocation.find_unique(
             where={"id": allocation_id},
             include={"student": True, "room": True}
         )
@@ -151,6 +165,15 @@ async def approve_allocation(
     try:
         service = AllocationService(db)
         allocation = await service.approve_allocation(allocation_id, current_user.id)
+        student = await db.student.find_unique(where={"id": allocation["studentId"]}, include={"user": True, "room": True})
+        if student and student.user:
+            await NotificationService(db).create_for_user(
+                user_id=student.user.id,
+                title="Room allocation approved",
+                message=f"Your room request was approved. Assigned room: {student.room.roomNumber if student.room else ''}.",
+                type_value="ROOM_APPROVED",
+                data={"link": "/student/room", "allocationId": allocation["id"]},
+            )
         
         return {
             "message": "Room allocation approved successfully",
@@ -175,6 +198,15 @@ async def reject_allocation(
     try:
         service = AllocationService(db)
         allocation = await service.reject_allocation(allocation_id, current_user.id, reason)
+        student = await db.student.find_unique(where={"id": allocation["studentId"]}, include={"user": True})
+        if student and student.user:
+            await NotificationService(db).create_for_user(
+                user_id=student.user.id,
+                title="Room allocation rejected",
+                message=f"Your room request was rejected. Reason: {allocation.get('rejectionReason') or reason}.",
+                type_value="ROOM_REJECTED",
+                data={"link": "/student/room", "allocationId": allocation["id"]},
+            )
         
         return {
             "message": "Room allocation rejected",

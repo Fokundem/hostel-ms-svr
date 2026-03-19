@@ -10,6 +10,15 @@ class PaymentCreate(BaseModel):
     type: str = Field(default="HOSTEL_FEE", description="HOSTEL_FEE, MAINTENANCE, OTHER")
     month: int = Field(..., ge=1, le=12)
     year: int = Field(..., ge=2000)
+    method: str = Field(
+        default="BANK_TRANSFER",
+        description="BANK_TRANSFER, POS, CASH, MOBILE_MONEY, OTHER",
+    )
+
+
+class PaymentAdminReview(BaseModel):
+    status: str = Field(..., description="APPROVED, REJECTED, PAID")
+    rejectionReason: Optional[str] = None
 
 
 class PaymentUpdate(BaseModel):
@@ -24,6 +33,11 @@ class PaymentResponse(BaseModel):
     month: int
     year: int
     status: str
+    method: Optional[str] = None
+    proofImageUrl: Optional[str] = None
+    rejectionReason: Optional[str] = None
+    reviewedAt: Optional[datetime] = None
+    reviewedBy: Optional[str] = None
     paidAt: Optional[datetime]
     createdAt: datetime
 

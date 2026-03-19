@@ -1,5 +1,5 @@
 from prisma import Prisma
-from app.schemas.payment import PaymentCreate, PaymentUpdate
+from schemas.payment import PaymentCreate, PaymentUpdate
 from typing import Optional, List
 from datetime import datetime
 
@@ -24,6 +24,11 @@ class PaymentService:
                 "month": payment.month,
                 "year": payment.year,
                 "status": payment.status,
+                "method": getattr(payment, "method", None),
+                "proofImageUrl": getattr(payment, "proofImageUrl", None),
+                "rejectionReason": getattr(payment, "rejectionReason", None),
+                "reviewedAt": payment.reviewedAt.isoformat() if getattr(payment, "reviewedAt", None) else None,
+                "reviewedBy": getattr(payment, "reviewedBy", None),
                 "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
                 "createdAt": payment.createdAt.isoformat(),
             }
@@ -36,8 +41,8 @@ class PaymentService:
             where={"studentId": student_id}
         )
         
-        total_due = sum(p.amount for p in payments if p.status in ["PENDING", "OVERDUE"])
-        total_paid = sum(p.amount for p in payments if p.status == "PAID")
+        total_due = sum(p.amount for p in payments if p.status in ["PENDING", "OVERDUE", "REJECTED"])
+        total_paid = sum(p.amount for p in payments if p.status in ["APPROVED", "PAID"])
         total_overdue = sum(p.amount for p in payments if p.status == "OVERDUE")
         
         return {
@@ -45,7 +50,7 @@ class PaymentService:
             "totalPaid": total_paid,
             "totalOverdue": total_overdue,
             "pendingCount": len([p for p in payments if p.status == "PENDING"]),
-            "paidCount": len([p for p in payments if p.status == "PAID"]),
+            "paidCount": len([p for p in payments if p.status in ["APPROVED", "PAID"]]),
             "overdueCount": len([p for p in payments if p.status == "OVERDUE"]),
         }
 
@@ -59,6 +64,7 @@ class PaymentService:
                 "month": payment_data.month,
                 "year": payment_data.year,
                 "status": "PENDING",
+                "method": getattr(payment_data, "method", "BANK_TRANSFER"),
             }
         )
         
@@ -70,6 +76,79 @@ class PaymentService:
             "month": payment.month,
             "year": payment.year,
             "status": payment.status,
+            "method": payment.method,
+            "proofImageUrl": payment.proofImageUrl,
+            "createdAt": payment.createdAt.isoformat(),
+        }
+
+    async def submit_payment_proof(
+        self,
+        student_id: str,
+        amount: float,
+        payment_type: str,
+        month: int,
+        year: int,
+        method: str,
+        proof_image_url: str,
+    ) -> dict:
+        payment = await self.db.payment.create(
+            data={
+                "studentId": student_id,
+                "amount": amount,
+                "type": payment_type,
+                "month": month,
+                "year": year,
+                "status": "SUBMITTED",
+                "method": method,
+                "proofImageUrl": proof_image_url,
+            }
+        )
+        return {
+            "id": payment.id,
+            "studentId": payment.studentId,
+            "amount": payment.amount,
+            "type": payment.type,
+            "month": payment.month,
+            "year": payment.year,
+            "status": payment.status,
+            "method": payment.method,
+            "proofImageUrl": payment.proofImageUrl,
+            "createdAt": payment.createdAt.isoformat(),
+        }
+
+    async def admin_review_payment(
+        self,
+        payment_id: str,
+        status_value: str,
+        reviewed_by: str,
+        rejection_reason: Optional[str] = None,
+    ) -> dict:
+        data = {
+            "status": status_value,
+            "reviewedAt": datetime.utcnow(),
+            "reviewedBy": reviewed_by,
+        }
+        if status_value in ["APPROVED", "PAID"]:
+            data["paidAt"] = datetime.utcnow()
+            data["rejectionReason"] = None
+        if status_value == "REJECTED":
+            data["rejectionReason"] = rejection_reason or "Rejected"
+
+        payment = await self.db.payment.update(where={"id": payment_id}, data=data)
+        return {
+            "id": payment.id,
+            "studentId": payment.studentId,
+            "amount": payment.amount,
+            "type": payment.type,
+            "month": payment.month,
+            "year": payment.year,
+            "status": payment.status,
+            "method": payment.method,
+            "proofImageUrl": payment.proofImageUrl,
+            "rejectionReason": payment.rejectionReason,
+            "reviewedAt": payment.reviewedAt.isoformat() if payment.reviewedAt else None,
+            "reviewedBy": payment.reviewedBy,
+            "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
             "createdAt": payment.createdAt.isoformat(),
         }
 
@@ -80,6 +159,7 @@ class PaymentService:
             data={
                 "status": "PAID",
                 "paidAt": datetime.utcnow(),
+                "reviewedAt": datetime.utcnow(),
             }
         )
         
@@ -91,6 +171,8 @@ class PaymentService:
             "month": payment.month,
             "year": payment.year,
             "status": payment.status,
+            "method": getattr(payment, "method", None),
+            "proofImageUrl": getattr(payment, "proofImageUrl", None),
             "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
             "createdAt": payment.createdAt.isoformat(),
         }
@@ -117,6 +199,11 @@ class PaymentService:
                 "month": payment.month,
                 "year": payment.year,
                 "status": payment.status,
+                "method": getattr(payment, "method", None),
+                "proofImageUrl": getattr(payment, "proofImageUrl", None),
+                "rejectionReason": getattr(payment, "rejectionReason", None),
+                "reviewedAt": payment.reviewedAt.isoformat() if getattr(payment, "reviewedAt", None) else None,
+                "reviewedBy": getattr(payment, "reviewedBy", None),
                 "paidAt": payment.paidAt.isoformat() if payment.paidAt else None,
                 "createdAt": payment.createdAt.isoformat(),
             }
