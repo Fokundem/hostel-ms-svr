@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     JSON,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 from db import Base
 
@@ -104,7 +105,7 @@ class Room(Base):
     capacity = Column(Integer, nullable=False)
     occupied = Column(Integer, nullable=False, default=0)
     status = Column(SAEnum(RoomStatusEnum), nullable=False, default=RoomStatusEnum.AVAILABLE)
-    amenities = Column(JSON, nullable=False, default=list)
+    amenities = Column(ARRAY(String), nullable=False, default=list)
     price = Column(Float, nullable=False)
     students = relationship("Student", back_populates="room")
     allocations = relationship("RoomAllocation", back_populates="room")
@@ -154,6 +155,14 @@ class PaymentTypeEnum(str, PyEnum):
     OTHER = "OTHER"
 
 
+class PaymentMethodEnum(str, PyEnum):
+    BANK_TRANSFER = "BANK_TRANSFER"
+    POS = "POS"
+    CASH = "CASH"
+    MOBILE_MONEY = "MOBILE_MONEY"
+    OTHER = "OTHER"
+
+
 class Payment(Base):
     __tablename__ = "Payment"
 
@@ -165,7 +174,7 @@ class Payment(Base):
     month = Column(Integer, nullable=False)
     year = Column(Integer, nullable=False)
     status = Column(SAEnum(PaymentStatusEnum), nullable=False, default=PaymentStatusEnum.PENDING)
-    method = Column(String, nullable=True)
+    method = Column(SAEnum(PaymentMethodEnum), nullable=False, default=PaymentMethodEnum.BANK_TRANSFER)
     proofImageUrl = Column(String, nullable=True)
     rejectionReason = Column(String, nullable=True)
     reviewedAt = Column(DateTime, nullable=True)
