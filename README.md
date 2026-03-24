@@ -1,12 +1,12 @@
 # HostelMS Backend
 
-FastAPI backend server for the HostelMS management system with JWT authentication, PostgreSQL database, and Prisma ORM.
+FastAPI backend server for the HostelMS management system with JWT authentication and PostgreSQL database using SQLAlchemy ORM.
 
 ## Features
 
 - ✅ JWT Authentication (Login/Register)
 - ✅ Role-based Access Control (ADMIN, HOSTEL_MANAGER, STUDENT, EMPLOYEE)
-- ✅ PostgreSQL Database with Prisma ORM
+- ✅ PostgreSQL Database with SQLAlchemy ORM
 - ✅ Swagger/OpenAPI Documentation
 - ✅ Security: Password hashing, JWT tokens, CORS
 - ✅ WebSocket support (ready for chat)
@@ -16,7 +16,7 @@ FastAPI backend server for the HostelMS management system with JWT authenticatio
 
 - **Framework**: FastAPI
 - **Database**: PostgreSQL
-- **ORM**: Prisma
+- **ORM**: SQLAlchemy
 - **Authentication**: JWT + Passlib
 - **Server**: Uvicorn
 - **Real-time**: WebSockets
@@ -76,26 +76,16 @@ Create a PostgreSQL database and update `.env` with your connection string:
 DATABASE_URL=postgresql://username:password@localhost:5432/hostel_ms_db
 ```
 
-### 5. Initialize Prisma
+### 5. Initialize Database
 
-```bash
-# Install Prisma CLI globally (one time)
-npm install -g @prisma/cli
-
-# Or use npx directly
-npx prisma migrate dev --name init
-```
-
-This will:
-- Create tables in PostgreSQL
-- Generate Prisma client
+The database tables will be automatically created when the server starts (using `Base.metadata.create_all` in `database.py`). Ensure your PostgreSQL server is running and the `DATABASE_URL` is correct in your `.env` file.
 
 ### 6. Update Environment Variables
 
 Copy `.env.example` to `.env` and update the values:
 
 ```bash
-cp .env.example .env
+cp example.env .env
 ```
 
 Update the `SECRET_KEY` with a strong secret:
@@ -227,8 +217,8 @@ utils/
 └── exceptions.py
 websockets/             # WebSocket handlers (ready for chat)
 
-prisma/
-└── schema.prisma       # Database schema
+db.py                   # SQLAlchemy engine and base
+models.py               # Database models
 
 docker-compose.yml      # PostgreSQL + PgAdmin
 requirements.txt        # Python dependencies
@@ -285,15 +275,9 @@ flake8 app/
 2. Verify DATABASE_URL in `.env`
 3. Run `docker-compose ps` to see container status
 
-### Migration Error
-
-```bash
-# Reset Prisma
-npx prisma generate
-
-# Re-run migrations
-npx prisma migrate dev
-```
+1. Check PostgreSQL is running
+2. Verify `DATABASE_URL` in `.env`
+3. Check table existence or run `Base.metadata.create_all(bind=engine)` from a shell if needed.
 
 ### Port Already in Use
 
